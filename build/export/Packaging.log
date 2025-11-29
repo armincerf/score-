@@ -1,0 +1,187 @@
+2025-11-30 14:23:32 +0000 [MT] Initial pipeline context: <IDEDistributionProcessingPipelineContext: 0xcb181cf00; archive(resolved)="<IDEArchive: 0xcb3ef3410>", distributionTask(resolved)="2", distributionDestination(resolved)="1", distributionMethod(resolved)="<IDEDistributionMethodDevelopmentSigned: 0xcb23e0110>", team(resolved)="<IDEProvisioningBasicTeam: 0xcb22d4a80; teamID='4HNG7QE476', teamName='Alex Davis'>">
+	Chain (14, self inclusive):
+	<IDEDistributionProcessingPipelineContext: 0xcb181cf00; archive = "<IDEArchive: 0xcb3ef3410>", distributionMethod="<IDEDistributionMethodDevelopmentSigned: 0xcb23e0110>", team="<IDEProvisioningBasicTeam: 0xcb22d4a80; teamID='4HNG7QE476', teamName='Alex Davis'>">
+	<IDEDistributionProcessingPipelineContext: 0xcb181e400; archive = "<IDEArchive: 0xcb3ef3410>", distributionMethod="<IDEDistributionMethodDevelopmentSigned: 0xcb23e0110>", team="<IDEProvisioningBasicTeam: 0xcb22d4a80; teamID='4HNG7QE476', teamName='Alex Davis'>">
+	<IDEDistributionContext: 0xcb231e800; archive = "<IDEArchive: 0xcb3ef3410>", distributionMethod="<IDEDistributionMethodDevelopmentSigned: 0xcb23e0110>", team="<IDEProvisioningBasicTeam: 0xcb22d4a80; teamID='4HNG7QE476', teamName='Alex Davis'>">
+	<IDEDistributionContext: 0xcb231d900; archive = "<IDEArchive: 0xcb3ef3410>", distributionMethod="<IDEDistributionMethodDevelopmentSigned: 0xcb23e0110>", team="<IDEProvisioningBasicTeam: 0xcb22d4a80; teamID='4HNG7QE476', teamName='Alex Davis'>">
+	<IDEDistributionContext: 0xcb231d680; archive = "<IDEArchive: 0xcb3ef3410>", distributionMethod="<IDEDistributionMethodDevelopmentSigned: 0xcb23e0110>", team="<IDEProvisioningBasicTeam: 0xcb22d4a80; teamID='4HNG7QE476', teamName='Alex Davis'>">
+	<IDEDistributionContext: 0xcb231d400; archive = "<IDEArchive: 0xcb3ef3410>", distributionMethod="<IDEDistributionMethodDevelopmentSigned: 0xcb23e0110>", team="<IDEProvisioningBasicTeam: 0xcb22d4a80; teamID='4HNG7QE476', teamName='Alex Davis'>">
+	<IDEDistributionContext: 0xcb231d180; archive = "<IDEArchive: 0xcb3ef3410>", distributionMethod="<IDEDistributionMethodDevelopmentSigned: 0xcb23e0110>", team="<IDEProvisioningBasicTeam: 0xcb22d4a80; teamID='4HNG7QE476', teamName='Alex Davis'>">
+	<IDEDistributionContext: 0xcb231cf00; archive = "<IDEArchive: 0xcb3ef3410>", distributionMethod="<IDEDistributionMethodDevelopmentSigned: 0xcb23e0110>", team="<IDEProvisioningBasicTeam: 0xcb22d4a80; teamID='4HNG7QE476', teamName='Alex Davis'>">
+	<IDEDistributionContext: 0xcb231cc80; archive = "<IDEArchive: 0xcb3ef3410>", distributionMethod="<IDEDistributionMethodDevelopmentSigned: 0xcb23e0110>", team="<IDEProvisioningBasicTeam: 0xcb22d4a80; teamID='4HNG7QE476', teamName='Alex Davis'>">
+	<IDEDistributionContext: 0xcb231ca00; archive = "<IDEArchive: 0xcb3ef3410>", distributionMethod="<IDEDistributionMethodDevelopmentSigned: 0xcb23e0110>", team="(null)">
+	<IDEDistributionContext: 0xcb231c780; archive = "<IDEArchive: 0xcb3ef3410>", distributionMethod="<IDEDistributionMethodDevelopmentSigned: 0xcb23e0110>", team="(null)">
+	<IDEDistributionContext: 0xcb231c500; archive = "<IDEArchive: 0xcb3ef3410>", distributionMethod="<IDEDistributionMethodDevelopmentSigned: 0xcb23e0110>", team="(null)">
+	<IDEDistributionContext: 0xcb231c280; archive = "<IDEArchive: 0xcb3ef3410>", distributionMethod="<IDEDistributionMethodDevelopmentSigned: 0xcb23e0110>", team="(null)">
+	<IDEDistributionContext: 0x100e1a6d0; archive = "<IDEArchive: 0xcb3ef3410>", distributionMethod="(null)", team="(null)">
+</IDEDistributionProcessingPipelineContext: 0xcb181cf00>
+2025-11-30 14:23:32 +0000 [MT] Processing step: IDEDistributionCreateDestRootStep
+2025-11-30 14:23:32 +0000 [MT] Processing step: IDEDistributionCopyItemStep
+2025-11-30 14:23:32 +0000 [MT] Running /usr/bin/ditto '-V' '/Users/alexdavis/ghq/github.com/armincerf/score/packages/ios/score/build/score.xcarchive/Products/Applications/score.app' '/var/folders/6q/jthnwlpd6v1301g68fb094rc0000gn/T/XcodeDistPipeline.~~~E4AB5Z/Root/Payload/score.app'
+2025-11-30 14:23:32 +0000  >>> Copying /Users/alexdavis/ghq/github.com/armincerf/score/packages/ios/score/build/score.xcarchive/Products/Applications/score.app 
+2025-11-30 14:23:33 +0000  copying file ./_CodeSignature/CodeResources ... 
+2025-11-30 14:23:33 +0000  3529 bytes for ./_CodeSignature/CodeResources
+2025-11-30 14:23:33 +0000  copying file ./score ... 
+2025-11-30 14:23:33 +0000  1101968 bytes for ./score
+2025-11-30 14:23:33 +0000  copying file ./Watch/scorewatch Watch App.app/_CodeSignature/CodeResources ... 
+2025-11-30 14:23:33 +0000  2111 bytes for ./Watch/scorewatch Watch App.app/_CodeSignature/CodeResources
+2025-11-30 14:23:33 +0000  copying file ./Watch/scorewatch Watch App.app/scorewatch Watch App ... 
+2025-11-30 14:23:33 +0000  508784 bytes for ./Watch/scorewatch Watch App.app/scorewatch Watch App
+2025-11-30 14:23:33 +0000  copying file ./Watch/scorewatch Watch App.app/embedded.mobileprovision ... 
+2025-11-30 14:23:33 +0000  14517 bytes for ./Watch/scorewatch Watch App.app/embedded.mobileprovision
+2025-11-30 14:23:33 +0000  copying file ./Watch/scorewatch Watch App.app/Info.plist ... 
+2025-11-30 14:23:33 +0000  1055 bytes for ./Watch/scorewatch Watch App.app/Info.plist
+2025-11-30 14:23:33 +0000  copying file ./Watch/scorewatch Watch App.app/PkgInfo ... 
+2025-11-30 14:23:33 +0000  8 bytes for ./Watch/scorewatch Watch App.app/PkgInfo
+2025-11-30 14:23:33 +0000  copying file ./embedded.mobileprovision ... 
+2025-11-30 14:23:33 +0000  14517 bytes for ./embedded.mobileprovision
+2025-11-30 14:23:33 +0000  copying file ./Info.plist ... 
+2025-11-30 14:23:33 +0000  1393 bytes for ./Info.plist
+2025-11-30 14:23:33 +0000  copying file ./PkgInfo ... 
+2025-11-30 14:23:33 +0000  8 bytes for ./PkgInfo
+2025-11-30 14:23:33 +0000 [MT] /usr/bin/ditto exited with 0
+2025-11-30 14:23:33 +0000 [MT] Processing step: IDEDistributionEmbedProfileStep
+2025-11-30 14:23:33 +0000 [MT] Processing step: IDEDistributionInfoPlistStep
+2025-11-30 14:23:33 +0000 [MT] Skipping step: IDEDistributionInfoPlistStep because it said so
+2025-11-30 14:23:33 +0000 [MT] Skipping step: IDEDistributionInfoPlistStep because it said so
+2025-11-30 14:23:33 +0000 [MT] Processing step: IDEDistributionAppThinningPlistStep
+2025-11-30 14:23:33 +0000 [MT] Skipping step: IDEDistributionAppThinningPlistStep because it said so
+2025-11-30 14:23:33 +0000 [MT] Processing step: IDEDistributionSymbolsStep
+2025-11-30 14:23:33 +0000 [MT] Skipping step: IDEDistributionSymbolsStep because it said so
+2025-11-30 14:23:33 +0000 [MT] Processing step: IDEDistributionAppThinningStep
+2025-11-30 14:23:33 +0000 [MT] Skipping step: IDEDistributionAppThinningStep because it said so
+2025-11-30 14:23:33 +0000 [MT] Processing step: IDEDistributionArchThinningStep
+2025-11-30 14:23:33 +0000 [MT] Archs to thin for item /Users/alexdavis/ghq/github.com/armincerf/score/packages/ios/score/build/score.xcarchive/Products/Applications/score.app/Watch/scorewatch Watch App.app are []
+2025-11-30 14:23:33 +0000 [MT] Archs to thin for item /Users/alexdavis/ghq/github.com/armincerf/score/packages/ios/score/build/score.xcarchive/Products/Applications/score.app are []
+2025-11-30 14:23:33 +0000 [MT] Processing step: IDEDistributionODRStep
+2025-11-30 14:23:33 +0000 [MT] Processing step: IDEDistributionStripXattrsStep
+2025-11-30 14:23:33 +0000 [MT] Skipping stripping extended attributes because the codesign step will strip them.
+2025-11-30 14:23:33 +0000 [MT] Skipping stripping extended attributes because the codesign step will strip them.
+2025-11-30 14:23:33 +0000 [MT] Processing step: IDEDistributionCodesignStep
+2025-11-30 14:23:33 +0000 [MT] Entitlements for <IDEDistributionItem: 0xcb3fa9e60; bundleID='armincerf.score.watchkitapp', path='<DVTFilePath:0xcb28edfe0:'/Users/alexdavis/ghq/github.com/armincerf/score/packages/ios/score/build/score.xcarchive/Products/Applications/score.app/Watch/scorewatch Watch App.app'>', codeSigningInfo='<_DVTCodeSigningInformation_Path: 0xcb3fa9da0; isSigned='1', isAdHocSigned='0', signingCertificate='<DVTSigningCertificate: 0xcb18309c0; name='Apple Development: Alex Davis (8X29699S4N)', hash='9DB68AFD44EDD38B5C14B0B12C03D86ED42FC333', serialNumber='D68500E957924DB132358DE53686E27', certificateKinds='(
+    "1.2.840.113635.100.6.1.12",
+    "1.2.840.113635.100.6.1.2"
+), issueDate='2025-11-29 22:15:17 +0000''>', entitlements='{
+    "application-identifier" = "4HNG7QE476.armincerf.score.watchkitapp";
+    "com.apple.developer.team-identifier" = 4HNG7QE476;
+    "get-task-allow" = 1;
+}', teamID='4HNG7QE476', identifier='armincerf.score.watchkitapp', executablePath='<DVTFilePath:0xcb23a2500:'/Users/alexdavis/ghq/github.com/armincerf/score/packages/ios/score/build/score.xcarchive/Products/Applications/score.app/Watch/scorewatch Watch App.app/scorewatch Watch App'>', hardenedRuntime='0'>'>: {
+    "application-identifier" = "4HNG7QE476.armincerf.score.watchkitapp";
+    "com.apple.developer.team-identifier" = 4HNG7QE476;
+    "get-task-allow" = 1;
+}
+2025-11-30 14:23:33 +0000 [MT] Associated App Clip Identifiers Filter: Skipping because "com.apple.developer.associated-appclip-app-identifiers" is not present
+2025-11-30 14:23:33 +0000 [MT] Entitlements for <IDEDistributionItem: 0xcb3fa9e60; bundleID='armincerf.score.watchkitapp', path='<DVTFilePath:0xcb28edfe0:'/Users/alexdavis/ghq/github.com/armincerf/score/packages/ios/score/build/score.xcarchive/Products/Applications/score.app/Watch/scorewatch Watch App.app'>', codeSigningInfo='<_DVTCodeSigningInformation_Path: 0xcb3fa9da0; isSigned='1', isAdHocSigned='0', signingCertificate='<DVTSigningCertificate: 0xcb18303c0; name='Apple Development: Alex Davis (8X29699S4N)', hash='9DB68AFD44EDD38B5C14B0B12C03D86ED42FC333', serialNumber='D68500E957924DB132358DE53686E27', certificateKinds='(
+    "1.2.840.113635.100.6.1.12",
+    "1.2.840.113635.100.6.1.2"
+), issueDate='2025-11-29 22:15:17 +0000''>', entitlements='{
+    "application-identifier" = "4HNG7QE476.armincerf.score.watchkitapp";
+    "com.apple.developer.team-identifier" = 4HNG7QE476;
+    "get-task-allow" = 1;
+}', teamID='4HNG7QE476', identifier='armincerf.score.watchkitapp', executablePath='<DVTFilePath:0xcb23a2500:'/Users/alexdavis/ghq/github.com/armincerf/score/packages/ios/score/build/score.xcarchive/Products/Applications/score.app/Watch/scorewatch Watch App.app/scorewatch Watch App'>', hardenedRuntime='0'>'> are: {
+    "application-identifier" = "4HNG7QE476.armincerf.score.watchkitapp";
+    "com.apple.developer.team-identifier" = 4HNG7QE476;
+    "get-task-allow" = 1;
+}
+2025-11-30 14:23:33 +0000 [MT] Writing entitlements for <IDEDistributionItem: 0xcb3fa9e60; bundleID='armincerf.score.watchkitapp', path='<DVTFilePath:0xcb28edfe0:'/Users/alexdavis/ghq/github.com/armincerf/score/packages/ios/score/build/score.xcarchive/Products/Applications/score.app/Watch/scorewatch Watch App.app'>', codeSigningInfo='<_DVTCodeSigningInformation_Path: 0xcb3fa9da0; isSigned='1', isAdHocSigned='0', signingCertificate='<DVTSigningCertificate: 0xcb18303c0; name='Apple Development: Alex Davis (8X29699S4N)', hash='9DB68AFD44EDD38B5C14B0B12C03D86ED42FC333', serialNumber='D68500E957924DB132358DE53686E27', certificateKinds='(
+    "1.2.840.113635.100.6.1.12",
+    "1.2.840.113635.100.6.1.2"
+), issueDate='2025-11-29 22:15:17 +0000''>', entitlements='{
+    "application-identifier" = "4HNG7QE476.armincerf.score.watchkitapp";
+    "com.apple.developer.team-identifier" = 4HNG7QE476;
+    "get-task-allow" = 1;
+}', teamID='4HNG7QE476', identifier='armincerf.score.watchkitapp', executablePath='<DVTFilePath:0xcb23a2500:'/Users/alexdavis/ghq/github.com/armincerf/score/packages/ios/score/build/score.xcarchive/Products/Applications/score.app/Watch/scorewatch Watch App.app/scorewatch Watch App'>', hardenedRuntime='0'>'> to: /var/folders/6q/jthnwlpd6v1301g68fb094rc0000gn/T/XcodeDistPipeline.~~~E4AB5Z/entitlements~~~cheMzM
+2025-11-30 14:23:33 +0000 [MT] invoking codesign: <NSConcreteTask: 0xcb3214550; launchPath='/usr/bin/codesign', arguments='(
+    "-f",
+    "-s",
+    9DB68AFD44EDD38B5C14B0B12C03D86ED42FC333,
+    "--entitlements",
+    "/var/folders/6q/jthnwlpd6v1301g68fb094rc0000gn/T/XcodeDistPipeline.~~~E4AB5Z/entitlements~~~cheMzM",
+    "--preserve-metadata=identifier,flags,runtime,launch-constraints,library-constraints",
+    "--generate-entitlement-der",
+    "--strip-disallowed-xattrs",
+    "-vvv",
+    "/var/folders/6q/jthnwlpd6v1301g68fb094rc0000gn/T/XcodeDistPipeline.~~~E4AB5Z/Root/Payload/score.app/Watch/scorewatch Watch App.app"
+)'>
+2025-11-30 14:23:33 +0000 [MT] codesign output: /var/folders/6q/jthnwlpd6v1301g68fb094rc0000gn/T/XcodeDistPipeline.~~~E4AB5Z/Root/Payload/score.app/Watch/scorewatch Watch App.app: replacing existing signature
+/var/folders/6q/jthnwlpd6v1301g68fb094rc0000gn/T/XcodeDistPipeline.~~~E4AB5Z/Root/Payload/score.app/Watch/scorewatch Watch App.app: signed app bundle with Mach-O universal (arm64 arm64_32) [armincerf.score.watchkitapp]
+2025-11-30 14:23:33 +0000 [MT] Entitlements for <IDEDistributionItem: 0xcb3fa9ec0; bundleID='armincerf.score', path='<DVTFilePath:0xcb3f37e40:'/Users/alexdavis/ghq/github.com/armincerf/score/packages/ios/score/build/score.xcarchive/Products/Applications/score.app'>', codeSigningInfo='<_DVTCodeSigningInformation_Path: 0xcb3fa9f20; isSigned='1', isAdHocSigned='0', signingCertificate='<DVTSigningCertificate: 0xcb18309c0; name='Apple Development: Alex Davis (8X29699S4N)', hash='9DB68AFD44EDD38B5C14B0B12C03D86ED42FC333', serialNumber='D68500E957924DB132358DE53686E27', certificateKinds='(
+    "1.2.840.113635.100.6.1.12",
+    "1.2.840.113635.100.6.1.2"
+), issueDate='2025-11-29 22:15:17 +0000''>', entitlements='{
+    "application-identifier" = "4HNG7QE476.armincerf.score";
+    "com.apple.developer.team-identifier" = 4HNG7QE476;
+    "get-task-allow" = 1;
+}', teamID='4HNG7QE476', identifier='armincerf.score', executablePath='<DVTFilePath:0xcb3fa9380:'/Users/alexdavis/ghq/github.com/armincerf/score/packages/ios/score/build/score.xcarchive/Products/Applications/score.app/score'>', hardenedRuntime='0'>'>: {
+    "application-identifier" = "4HNG7QE476.armincerf.score";
+    "com.apple.developer.team-identifier" = 4HNG7QE476;
+    "get-task-allow" = 1;
+}
+2025-11-30 14:23:33 +0000 [MT] Associated App Clip Identifiers Filter: Skipping because "com.apple.developer.associated-appclip-app-identifiers" is not present
+2025-11-30 14:23:33 +0000 [MT] Entitlements for <IDEDistributionItem: 0xcb3fa9ec0; bundleID='armincerf.score', path='<DVTFilePath:0xcb3f37e40:'/Users/alexdavis/ghq/github.com/armincerf/score/packages/ios/score/build/score.xcarchive/Products/Applications/score.app'>', codeSigningInfo='<_DVTCodeSigningInformation_Path: 0xcb3fa9f20; isSigned='1', isAdHocSigned='0', signingCertificate='<DVTSigningCertificate: 0xcb18303c0; name='Apple Development: Alex Davis (8X29699S4N)', hash='9DB68AFD44EDD38B5C14B0B12C03D86ED42FC333', serialNumber='D68500E957924DB132358DE53686E27', certificateKinds='(
+    "1.2.840.113635.100.6.1.12",
+    "1.2.840.113635.100.6.1.2"
+), issueDate='2025-11-29 22:15:17 +0000''>', entitlements='{
+    "application-identifier" = "4HNG7QE476.armincerf.score";
+    "com.apple.developer.team-identifier" = 4HNG7QE476;
+    "get-task-allow" = 1;
+}', teamID='4HNG7QE476', identifier='armincerf.score', executablePath='<DVTFilePath:0xcb3fa9380:'/Users/alexdavis/ghq/github.com/armincerf/score/packages/ios/score/build/score.xcarchive/Products/Applications/score.app/score'>', hardenedRuntime='0'>'> are: {
+    "application-identifier" = "4HNG7QE476.armincerf.score";
+    "com.apple.developer.team-identifier" = 4HNG7QE476;
+    "get-task-allow" = 1;
+}
+2025-11-30 14:23:33 +0000 [MT] Writing entitlements for <IDEDistributionItem: 0xcb3fa9ec0; bundleID='armincerf.score', path='<DVTFilePath:0xcb3f37e40:'/Users/alexdavis/ghq/github.com/armincerf/score/packages/ios/score/build/score.xcarchive/Products/Applications/score.app'>', codeSigningInfo='<_DVTCodeSigningInformation_Path: 0xcb3fa9f20; isSigned='1', isAdHocSigned='0', signingCertificate='<DVTSigningCertificate: 0xcb18303c0; name='Apple Development: Alex Davis (8X29699S4N)', hash='9DB68AFD44EDD38B5C14B0B12C03D86ED42FC333', serialNumber='D68500E957924DB132358DE53686E27', certificateKinds='(
+    "1.2.840.113635.100.6.1.12",
+    "1.2.840.113635.100.6.1.2"
+), issueDate='2025-11-29 22:15:17 +0000''>', entitlements='{
+    "application-identifier" = "4HNG7QE476.armincerf.score";
+    "com.apple.developer.team-identifier" = 4HNG7QE476;
+    "get-task-allow" = 1;
+}', teamID='4HNG7QE476', identifier='armincerf.score', executablePath='<DVTFilePath:0xcb3fa9380:'/Users/alexdavis/ghq/github.com/armincerf/score/packages/ios/score/build/score.xcarchive/Products/Applications/score.app/score'>', hardenedRuntime='0'>'> to: /var/folders/6q/jthnwlpd6v1301g68fb094rc0000gn/T/XcodeDistPipeline.~~~E4AB5Z/entitlements~~~au0SOP
+2025-11-30 14:23:33 +0000 [MT] invoking codesign: <NSConcreteTask: 0xcb3214690; launchPath='/usr/bin/codesign', arguments='(
+    "-f",
+    "-s",
+    9DB68AFD44EDD38B5C14B0B12C03D86ED42FC333,
+    "--entitlements",
+    "/var/folders/6q/jthnwlpd6v1301g68fb094rc0000gn/T/XcodeDistPipeline.~~~E4AB5Z/entitlements~~~au0SOP",
+    "--preserve-metadata=identifier,flags,runtime,launch-constraints,library-constraints",
+    "--generate-entitlement-der",
+    "--strip-disallowed-xattrs",
+    "-vvv",
+    "/var/folders/6q/jthnwlpd6v1301g68fb094rc0000gn/T/XcodeDistPipeline.~~~E4AB5Z/Root/Payload/score.app"
+)'>
+2025-11-30 14:23:33 +0000 [MT] codesign output: /var/folders/6q/jthnwlpd6v1301g68fb094rc0000gn/T/XcodeDistPipeline.~~~E4AB5Z/Root/Payload/score.app: replacing existing signature
+/var/folders/6q/jthnwlpd6v1301g68fb094rc0000gn/T/XcodeDistPipeline.~~~E4AB5Z/Root/Payload/score.app: signed app bundle with Mach-O thin (arm64) [armincerf.score]
+2025-11-30 14:23:33 +0000 [MT] Processing step: IDEDistributionZipODRItemStep
+2025-11-30 14:23:33 +0000 [MT] Skipping step: IDEDistributionZipODRItemStep because it said so
+2025-11-30 14:23:33 +0000 [MT] Skipping step: IDEDistributionZipODRItemStep because it said so
+2025-11-30 14:23:33 +0000 [MT] Processing step: IDEDistributionCreateIPAStep
+2025-11-30 14:23:33 +0000 [MT] Running /usr/bin/ditto '-V' '-c' '-k' '--norsrc' '/var/folders/6q/jthnwlpd6v1301g68fb094rc0000gn/T/XcodeDistPipeline.~~~E4AB5Z/Root' '/var/folders/6q/jthnwlpd6v1301g68fb094rc0000gn/T/XcodeDistPipeline.~~~E4AB5Z/Packages/score.ipa'
+2025-11-30 14:23:33 +0000  >>> Copying /var/folders/6q/jthnwlpd6v1301g68fb094rc0000gn/T/XcodeDistPipeline.~~~E4AB5Z/Root 
+2025-11-30 14:23:33 +0000  copying file ./Payload/score.app/_CodeSignature/CodeResources ... 
+2025-11-30 14:23:33 +0000  3529 bytes for ./Payload/score.app/_CodeSignature/CodeResources
+2025-11-30 14:23:33 +0000  copying file ./Payload/score.app/score ... 
+2025-11-30 14:23:33 +0000  1101968 bytes for ./Payload/score.app/score
+2025-11-30 14:23:33 +0000  copying file ./Payload/score.app/Watch/scorewatch Watch App.app/_CodeSignature/CodeResources ... 
+2025-11-30 14:23:33 +0000  2111 bytes for ./Payload/score.app/Watch/scorewatch Watch App.app/_CodeSignature/CodeResources
+2025-11-30 14:23:33 +0000  copying file ./Payload/score.app/Watch/scorewatch Watch App.app/scorewatch Watch App ... 
+2025-11-30 14:23:33 +0000  508784 bytes for ./Payload/score.app/Watch/scorewatch Watch App.app/scorewatch Watch App
+2025-11-30 14:23:33 +0000  copying file ./Payload/score.app/Watch/scorewatch Watch App.app/embedded.mobileprovision ... 
+2025-11-30 14:23:33 +0000  14517 bytes for ./Payload/score.app/Watch/scorewatch Watch App.app/embedded.mobileprovision
+2025-11-30 14:23:33 +0000  copying file ./Payload/score.app/Watch/scorewatch Watch App.app/Info.plist ... 
+2025-11-30 14:23:33 +0000  1055 bytes for ./Payload/score.app/Watch/scorewatch Watch App.app/Info.plist
+2025-11-30 14:23:33 +0000  copying file ./Payload/score.app/Watch/scorewatch Watch App.app/PkgInfo ... 
+2025-11-30 14:23:33 +0000  8 bytes for ./Payload/score.app/Watch/scorewatch Watch App.app/PkgInfo
+2025-11-30 14:23:33 +0000  copying file ./Payload/score.app/embedded.mobileprovision ... 
+2025-11-30 14:23:33 +0000  14517 bytes for ./Payload/score.app/embedded.mobileprovision
+2025-11-30 14:23:33 +0000  copying file ./Payload/score.app/Info.plist ... 
+2025-11-30 14:23:33 +0000  1393 bytes for ./Payload/score.app/Info.plist
+2025-11-30 14:23:33 +0000  copying file ./Payload/score.app/PkgInfo ... 
+2025-11-30 14:23:33 +0000  8 bytes for ./Payload/score.app/PkgInfo
+2025-11-30 14:23:33 +0000 [MT] /usr/bin/ditto exited with 0
+2025-11-30 14:23:33 +0000 [MT] Processing step: IDEDistributionAppStoreInformationStep
+2025-11-30 14:23:33 +0000 [MT] Skipping step: IDEDistributionAppStoreInformationStep because it said so
+2025-11-30 14:23:33 +0000 [MT] Processing step: IDEDistributionGenerateProcessedDistributionItems
+2025-11-30 14:23:33 +0000 [MT] IDEDistributionItem init <DVTFilePath:0xcb28ef160:'/var/folders/6q/jthnwlpd6v1301g68fb094rc0000gn/T/XcodeDistPipeline.~~~E4AB5Z/Root/Payload/score.app/Watch/scorewatch Watch App.app'>
+2025-11-30 14:23:33 +0000 [MT] IDEDistributionItem init <DVTFilePath:0xcb305a3a0:'/var/folders/6q/jthnwlpd6v1301g68fb094rc0000gn/T/XcodeDistPipeline.~~~E4AB5Z/Root/Payload/score.app'>
+2025-11-30 14:23:33 +0000 [MT] Processing step: IDEDistributionCreateManifestStep

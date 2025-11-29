@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>score.ipa</key>
+	<array>
+		<dict>
+			<key>architectures</key>
+			<array>
+				<string>arm64</string>
+			</array>
+			<key>buildNumber</key>
+			<string>1</string>
+			<key>certificate</key>
+			<dict>
+				<key>SHA1</key>
+				<string>9DB68AFD44EDD38B5C14B0B12C03D86ED42FC333</string>
+				<key>dateExpires</key>
+				<string>29/11/2026</string>
+				<key>type</key>
+				<string>Apple Development</string>
+			</dict>
+			<key>embeddedBinaries</key>
+			<array>
+				<dict>
+					<key>architectures</key>
+					<array>
+						<string>arm64_32</string>
+						<string>arm64</string>
+					</array>
+					<key>buildNumber</key>
+					<string>1</string>
+					<key>certificate</key>
+					<dict>
+						<key>SHA1</key>
+						<string>9DB68AFD44EDD38B5C14B0B12C03D86ED42FC333</string>
+						<key>dateExpires</key>
+						<string>29/11/2026</string>
+						<key>type</key>
+						<string>Apple Development</string>
+					</dict>
+					<key>entitlements</key>
+					<dict>
+						<key>application-identifier</key>
+						<string>4HNG7QE476.armincerf.score.watchkitapp</string>
+						<key>com.apple.developer.team-identifier</key>
+						<string>4HNG7QE476</string>
+						<key>get-task-allow</key>
+						<true/>
+					</dict>
+					<key>name</key>
+					<string>scorewatch Watch App.app</string>
+					<key>profile</key>
+					<dict>
+						<key>UUID</key>
+						<string>559bf145-b817-4633-bbb9-ba839fb6304a</string>
+						<key>dateExpires</key>
+						<string>30/11/2026</string>
+						<key>name</key>
+						<string>iOS Team Provisioning Profile: *</string>
+					</dict>
+					<key>team</key>
+					<dict>
+						<key>id</key>
+						<string>4HNG7QE476</string>
+						<key>name</key>
+						<string>Alex Davis</string>
+					</dict>
+					<key>versionNumber</key>
+					<string>1.0</string>
+				</dict>
+			</array>
+			<key>entitlements</key>
+			<dict>
+				<key>application-identifier</key>
+				<string>4HNG7QE476.armincerf.score</string>
+				<key>com.apple.developer.team-identifier</key>
+				<string>4HNG7QE476</string>
+				<key>get-task-allow</key>
+				<true/>
+			</dict>
+			<key>name</key>
+			<string>score.app</string>
+			<key>profile</key>
+			<dict>
+				<key>UUID</key>
+				<string>559bf145-b817-4633-bbb9-ba839fb6304a</string>
+				<key>dateExpires</key>
+				<string>30/11/2026</string>
+				<key>name</key>
+				<string>iOS Team Provisioning Profile: *</string>
+			</dict>
+			<key>team</key>
+			<dict>
+				<key>id</key>
+				<string>4HNG7QE476</string>
+				<key>name</key>
+				<string>Alex Davis</string>
+			</dict>
+			<key>versionNumber</key>
+			<string>1.0</string>
+		</dict>
+	</array>
+</dict>
+</plist>
