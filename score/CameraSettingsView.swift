@@ -8,6 +8,7 @@
 import AVFoundation
 import SwiftData
 import SwiftUI
+import UIKit
 import os
 
 struct CameraSettingsView: View {
@@ -64,7 +65,9 @@ struct CameraSettingsView: View {
 
                     // Live Camera Preview
                     ZStack {
-                        if cameraEnabled {
+                        if cameraEnabled, cameraManager.permissionDenied {
+                            CameraAccessDeniedView()
+                        } else if cameraEnabled {
                             CameraPreviewRepresentable(manager: cameraManager)
                                 .frame(height: 300)
                                 .cornerRadius(12)
@@ -91,8 +94,8 @@ struct CameraSettingsView: View {
                             .cornerRadius(12)
                         }
 
-                        // Preview overlay info (only when enabled)
-                        if cameraEnabled {
+                        // Preview overlay info (only while the preview is showing)
+                        if cameraEnabled, !cameraManager.permissionDenied {
                             VStack {
                                 HStack {
                                     Text(selectedDeviceType.displayName)
@@ -109,6 +112,14 @@ struct CameraSettingsView: View {
                         }
                     }
                     .padding(.horizontal)
+
+                    if cameraEnabled, let errorMessage = cameraManager.errorMessage {
+                        Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal)
+                    }
 
                     // Camera Lens Selection
                     VStack(alignment: .leading, spacing: 12) {
@@ -212,11 +223,11 @@ struct CameraSettingsView: View {
             cameraEnabled = prefs.cameraEnabled
             selectedDeviceType = CameraDeviceType.from(string: prefs.cameraDeviceType ?? "wide")
             selectedQuality = VideoQualityPreset.from(string: prefs.videoQualityPreset ?? "hd720p")
-            if cameraEnabled {
-                cameraManager.switchCamera(to: selectedDeviceType)
-                cameraManager.updateQuality(selectedQuality)
-            }
         }
+        // Hand the selection to the manager even with recording off: turning it on later starts the
+        // session with the lens and quality the manager was last asked for (it defaults to Wide).
+        cameraManager.switchCamera(to: selectedDeviceType)
+        cameraManager.updateQuality(selectedQuality)
     }
 
     private func savePreferences() {
@@ -231,6 +242,31 @@ struct CameraSettingsView: View {
         } catch {
             Log.ui.error("Error saving: \(error)")
         }
+    }
+}
+
+// MARK: - Camera Access Denied
+
+/// Shown in place of the preview when camera access is denied or restricted.
+private struct CameraAccessDeniedView: View {
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        ContentUnavailableView {
+            Label("Camera Access Off", systemImage: "video.slash")
+        } description: {
+            Text("Allow camera access in Settings to preview and record matches.")
+        } actions: {
+            Button("Open Settings") {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    openURL(url)
+                }
+            }
+        }
+        .frame(height: 300)
+        .frame(maxWidth: .infinity)
+        .background(Color.secondary.opacity(0.1))
+        .cornerRadius(12)
     }
 }
 

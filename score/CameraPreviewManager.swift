@@ -149,7 +149,9 @@ final class CameraPreviewManager: NSObject {
             Log.video.debug("No camera access yet; \(deviceType.displayName) is applied once it is granted")
             return
         }
-        enqueueInput(for: deviceType)
+        // Re-applies the requested quality after the new input: a preset the old lens couldn't
+        // take may suit this one (and is a no-op when it is already set).
+        configureSession()
     }
 
     private func enqueueInput(for deviceType: CameraDeviceType) {
@@ -346,7 +348,9 @@ final class CameraPreviewUIView: UIView {
 
     private func applyPreviewRotation() {
         guard let connection = previewLayer.connection else { return }
-        let angle = rotationCoordinator?.videoRotationAngleForHorizonLevelPreview ?? interfaceOrientationAngle()
+        let angle =
+            rotationCoordinator?.videoRotationAngleForHorizonLevelPreview
+            ?? Self.fallbackPreviewAngle(for: window?.windowScene?.effectiveGeometry.interfaceOrientation ?? .portrait)
         guard connection.videoRotationAngle != angle, connection.isVideoRotationAngleSupported(angle) else { return }
         connection.videoRotationAngle = angle
         Log.video.debug("Preview rotation set to \(angle) degrees")
@@ -354,8 +358,8 @@ final class CameraPreviewUIView: UIView {
 
     /// Fallback when there is no device to coordinate with: the back camera's sensor is
     /// landscape-right native, so rotate by the interface orientation.
-    private func interfaceOrientationAngle() -> CGFloat {
-        switch window?.windowScene?.effectiveGeometry.interfaceOrientation ?? .portrait {
+    nonisolated static func fallbackPreviewAngle(for orientation: UIInterfaceOrientation) -> CGFloat {
+        switch orientation {
         case .landscapeRight: 0
         case .landscapeLeft: 180
         case .portraitUpsideDown: 270
