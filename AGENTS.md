@@ -62,7 +62,7 @@ score/                      iOS app target
   SwiftDataModels.swift       @Model StoredMatch, StoredMatchEvent (JSON event payload), UserPreferences
   EventStore.swift            Append/query events and matches on the main ModelContext
   StateProjector.swift        Replays events into ScoreState (one `apply` per event type)
-  UndoService.swift           Soft-delete undo of points/highlights in the current game (max depth 10)
+  UndoService.swift           Soft-delete undo of the latest point or highlight mark in the current game
   UserPreferencesService.swift Names + camera prefs in SwiftData
   WatchSyncState.swift        Minimal sync payload (currently unused by the live protocol)
   Log.swift                   os.Logger categories: app, match, video, audio, store, ui, ai

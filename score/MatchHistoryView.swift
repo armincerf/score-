@@ -67,6 +67,9 @@ struct MatchRowView: View {
     }
 
     private func extractPlayerName(playerNumber: Int) -> String {
+        if let stored = playerNumber == 1 ? match.playerOneName : match.playerTwoName {
+            return stored.split(separator: " ").first.map(String.init) ?? stored
+        }
         guard let name = match.name else {
             return playerNumber == 1 ? "P1" : "P2"
         }
@@ -90,6 +93,22 @@ struct MatchRowView: View {
         }
 
         return playerNumber == 1 ? "P1" : "P2"
+    }
+
+    private var resultBadge: String {
+        switch match.winner {
+        case 1: return "\(extractPlayerName(playerNumber: 1)) Won"
+        case 2: return "\(extractPlayerName(playerNumber: 2)) Won"
+        default: return "No winner"
+        }
+    }
+
+    private var winnerColor: Color {
+        switch match.winner {
+        case 1: return .blue
+        case 2: return .red
+        default: return .gray
+        }
     }
 
     var body: some View {
@@ -131,17 +150,14 @@ struct MatchRowView: View {
                 }
 
                 // Winner badge
-                Text(
-                    match.winner == 1
-                        ? "\(extractPlayerName(playerNumber: 1)) Won" : "\(extractPlayerName(playerNumber: 2)) Won"
-                )
-                .font(.caption)
-                .bold()
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(match.winner == 1 ? Color.blue.opacity(0.2) : Color.red.opacity(0.2))
-                .foregroundColor(match.winner == 1 ? .blue : .red)
-                .cornerRadius(6)
+                Text(resultBadge)
+                    .font(.caption)
+                    .bold()
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(winnerColor.opacity(0.2))
+                    .foregroundColor(winnerColor)
+                    .cornerRadius(6)
 
                 Spacer()
 

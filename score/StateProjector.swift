@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import os
 
 class StateProjector {
     /// Scratch state carried through one replay of a match's events.
@@ -23,7 +24,13 @@ class StateProjector {
     func project(events: [StoredMatchEvent], matchMetadata: StoredMatch) throws -> ScoreState {
         var replay = Replay()
         for storedEvent in events where !storedEvent.isUndone {
-            try apply(storedEvent, to: &replay)
+            do {
+                try apply(storedEvent, to: &replay)
+            } catch {
+                // One corrupt event must not make the whole match unloadable
+                Log.store.error(
+                    "Skipping undecodable \(storedEvent.eventType) event #\(storedEvent.sequenceNumber): \(error)")
+            }
         }
         replay.state.currentGamePoints = replay.currentGamePoints
         replay.state.highlightClips = replay.highlightClips
@@ -96,6 +103,17 @@ class StateProjector {
     }
 
     private func apply(_ event: HighlightMarkedEvent, to replay: inout Replay) {
+        if event.player == nil, let pending = replay.state.pendingHighlight {
+            // A second mark before the next point belongs to the same rally: extend the pending clip
+            replay.state.pendingHighlight = HighlightClip(
+                id: pending.id,
+                startTimestamp: pending.startTimestamp,
+                endTimestamp: max(pending.endTimestamp, event.videoTimestamp),
+                player: nil,
+                gameNumber: pending.gameNumber
+            )
+            return
+        }
         // The clip starts at the last scored point before the highlight was marked
         let clip = HighlightClip(
             id: event.id,

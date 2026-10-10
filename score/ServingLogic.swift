@@ -15,8 +15,8 @@ nonisolated enum ServingLogic {
     /// - Parameter matchHistory: Previous matches
     /// - Returns: Player number (1 or 2) who should serve first
     static func determineInitialServer(matchHistory: [MatchResult]) -> Int {
-        guard let lastMatch = matchHistory.last else {
-            // No history - random selection
+        guard let lastMatch = matchHistory.last, lastMatch.hasWinner else {
+            // No history (or last match had no winner) - random selection
             return Bool.random() ? 1 : 2
         }
 
@@ -97,35 +97,23 @@ nonisolated enum ServingLogic {
 
     // MARK: - Statistics Calculation
 
-    /// Calculates the total number of serves a player had in a game
-    /// - Parameters:
-    ///   - player: Player number (1 or 2)
-    ///   - firstServer: Who served first in the game
-    ///   - finalP1Score: Final score for player 1
-    ///   - finalP2Score: Final score for player 2
-    /// - Returns: Number of points where the player was serving
+    /// Who serves the point at 0-based `index` of a game in which `firstServer` served first.
+    /// Service changes every two points until 10-10 (20 points played), then every point.
+    static func serverForPoint(index: Int, firstServer: Int) -> Int {
+        let other = firstServer == 1 ? 2 : 1
+        let turn = index < 20 ? index / 2 : index - 10
+        return turn.isMultiple(of: 2) ? firstServer : other
+    }
+
+    /// Calculates the total number of serves a player had in a game from its final score.
+    /// Serve order depends only on how many points have been played, not on who scored them.
     static func calculateTotalServes(
         forPlayer player: Int,
         firstServer: Int,
         finalP1Score: Int,
         finalP2Score: Int
     ) -> Int {
-        let totalPoints = finalP1Score + finalP2Score
-        var serveCount = 0
-
-        // Iterate through all points and check who was serving
-        for pointIndex in 0..<totalPoints {
-            let servingPlayer = calculateCurrentServer(
-                firstServer: firstServer,
-                playerOneScore: pointIndex >= finalP1Score ? finalP1Score : min(pointIndex, finalP1Score),
-                playerTwoScore: pointIndex >= finalP2Score ? finalP2Score : pointIndex - min(pointIndex, finalP1Score)
-            )
-
-            if servingPlayer == player {
-                serveCount += 1
-            }
-        }
-
-        return serveCount
+        (0..<(finalP1Score + finalP2Score)).filter { serverForPoint(index: $0, firstServer: firstServer) == player }
+            .count
     }
 }

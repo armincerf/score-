@@ -17,6 +17,7 @@ struct HomeView: View {
     @State private var showingSettings = false
     @State private var player1Name = ""
     @State private var player2Name = ""
+    @State private var isFinishingMatch = false
 
     private var preferencesService: UserPreferencesService {
         UserPreferencesService(modelContext: modelContext)
@@ -180,6 +181,15 @@ struct HomeView: View {
             .sheet(isPresented: $showingSettings) {
                 CameraSettingsView()
             }
+            .sheet(isPresented: $isFinishingMatch) {
+                ExportProgressView()
+            }
+            .onChange(of: connectivity.endMatchRequestCount) { _, count in
+                // Watch asked to end the match while the game screen was not showing: show it so it can
+                if count > 0, connectivity.isRecording, !showingGame {
+                    showingGame = true
+                }
+            }
             .alert("Active Match in Progress", isPresented: $showingActiveMatchAlert) {
                 Button("Cancel", role: .cancel) {}
                 Button("Save & Start New") {
@@ -216,10 +226,10 @@ struct HomeView: View {
     }
 
     private func saveAndStartNew() async {
-        // Stop recording and save current match
-        let videoURL = await connectivity.stopRecording()
-        let (fullVideo, highlightReel) = await connectivity.exportMatchVideos(from: videoURL)
-        connectivity.endMatch(fullVideoURL: fullVideo, highlightVideoURL: highlightReel)
+        // Stop recording, export and save the current match before offering a new one
+        isFinishingMatch = true
+        await connectivity.finishActiveMatch()
+        isFinishingMatch = false
 
         // Now start new match
         prepareMatchName()

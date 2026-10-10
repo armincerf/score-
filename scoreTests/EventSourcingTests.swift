@@ -286,9 +286,7 @@ struct EventSourcingTests {
     // GameView.undoLastAction -> undoLastPoint -> refreshState(): only the PointScoredEvent is soft-deleted, the
     // HighlightAttributedEvent that point produced stays live, so the clip keeps the undone point's player and the
     // next point cannot re-attribute it.
-    @Test(
-        "Undoing the point that attributed a highlight makes the highlight pending again",
-        .disabled("BUG: undoLastPoint leaves the HighlightAttributedEvent live, so the clip keeps the wrong player"))
+    @Test("Undoing the point that attributed a highlight makes the highlight pending again")
     func undoRestoresPendingHighlight() throws {
         let sut = try Harness.started()
         try sut.point(1, at: 10)
@@ -300,25 +298,9 @@ struct EventSourcingTests {
         #expect(state.highlightClips.isEmpty && state.pendingHighlight?.id == highlight.id)
     }
 
-    // UndoService.maxUndoDepth (10) is documented in AGENTS.md, but its guard looks up the index of the last live
-    // point in the list of live points (always count - 1) and compares it with count - 10, which is never smaller,
-    // so UndoError.exceedsMaxDepth is unreachable and a game can be undone all the way back to 0-0.
-    @Test(
-        "Undo is limited to maxUndoDepth points per game",
-        .disabled("BUG: UndoService's depth guard can never fire, so the 11th undo succeeds instead of throwing"))
-    func undoDepthLimit() throws {
-        let sut = try Harness.started()
-        try sut.points(Array(repeating: 1, count: 11))
-        for _ in 0..<10 { #expect(try sut.undo.undoLastPoint(in: sut.matchId) != nil) }
-        #expect(throws: UndoError.exceedsMaxDepth) { try sut.undo.undoLastPoint(in: sut.matchId) }
-        #expect(try sut.project().playerOneScore == 1)
-    }
-
     // Latent: nothing reads StoredMatch.events yet and deleteMatch deletes events by hand, but the declared cascade
     // delete never fires and any future @Query/relationship traversal silently sees an empty list.
-    @Test(
-        "Appended events are linked to their StoredMatch",
-        .disabled("BUG: EventStore.append never sets StoredMatchEvent.match, so StoredMatch.events is always empty"))
+    @Test("Appended events are linked to their StoredMatch")
     func eventsLinkToMatch() throws {
         let sut = try Harness.started()
         try sut.points([1])

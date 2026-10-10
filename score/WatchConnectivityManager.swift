@@ -54,8 +54,16 @@ class WatchConnectivityManager: NSObject {
     var isRecording = false
     var recordingDuration: TimeInterval = 0
 
-    // Signal for watch-initiated end match (triggers UI flow in GameView)
-    var shouldEndMatchFromWatch = false
+    /// Incremented for every "end match" request from the watch; GameView acts on increases.
+    var endMatchRequestCount = 0
+    /// Set when a game win decides the match (best of `bestOf`); the UI offers to end the match.
+    var matchWonBy: Int?
+    /// True while finishActiveMatch() is stopping, exporting and persisting.
+    var isExporting = false
+    var exportProgress: Double = 0
+
+    /// Matches are played as best of five.
+    static let bestOf = 5
 
     private var session: WCSession?
     var videoManager: VideoRecordingManager?
@@ -124,74 +132,34 @@ class WatchConnectivityManager: NSObject {
 
     private func loadActiveMatch() {
         do {
-            if let activeMatch = try eventStore.getActiveMatch() {
-                currentMatchId = activeMatch.id
-                Log.match.debug("Loading active match: \(activeMatch.matchName)")
+            guard let activeMatch = try eventStore.getActiveMatch() else { return }
+            currentMatchId = activeMatch.id
+            Log.match.info("Loading active match: \(activeMatch.matchName)")
 
-                // Rebuild state from events
-                let events = try eventStore.getEvents(matchId: activeMatch.id)
-                scoreState = try stateProjector.project(events: events, matchMetadata: activeMatch)
+            let events = try eventStore.getEvents(matchId: activeMatch.id)
+            scoreState = try stateProjector.project(events: events, matchMetadata: activeMatch)
+            syncCaches(with: scoreState)
 
-                // Calculate current game number
-                currentGameNumber = scoreState.currentMatchGames.count
-
-                // Restore video file path from MatchStartedEvent
-                if let matchStartedEvent = events.first(where: { $0.eventType == EventType.matchStarted.rawValue }) {
-                    let event = try JSONDecoder().decode(MatchStartedEvent.self, from: matchStartedEvent.eventData)
-                    if let videoPath = event.videoFilePath {
-                        currentVideoURL = URL(fileURLWithPath: videoPath)
-                        Log.match.debug("Restored video file path: \(videoPath)")
-
-                        // Check if video file exists
-                        if !FileManager.default.fileExists(atPath: videoPath) {
-                            Log.match.warning(
-                                "⚠️ Video file does not exist at path - recording may have been interrupted")
-                        }
-                    }
+            // Restore the video file path from the MatchStartedEvent
+            if let started = events.first(where: { $0.eventType == EventType.matchStarted.rawValue }),
+                let event = try? JSONDecoder().decode(MatchStartedEvent.self, from: started.eventData),
+                let videoPath = event.videoFilePath
+            {
+                currentVideoURL = URL(fileURLWithPath: videoPath)
+                if !FileManager.default.fileExists(atPath: videoPath) {
+                    Log.match.warning("⚠️ Video file missing at \(videoPath) - recording may have been interrupted")
                 }
-
-                // Sync recording state
-                isRecording = scoreState.isRecording
-
-                // Recalculate recording duration if recording is active
-                if scoreState.isRecording, let startTime = scoreState.recordingStartTime {
-                    recordingDuration = Date().timeIntervalSince(startTime)
-
-                    // Restart duration timer - capture startTime to avoid accessing MainActor property in timer
-                    durationTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-                        Task { @MainActor in
-                            guard let self else { return }
-                            self.recordingDuration = Date().timeIntervalSince(startTime)
-                        }
-                    }
-
-                    // Rebuild point timestamps for video generation
-                    for game in scoreState.currentMatchGames {
-                        for point in game.points {
-                            if let videoTime = point.videoTimestamp {
-                                pointTimestamps.append(videoTime)
-                            }
-                        }
-                    }
-                    for point in scoreState.currentGamePoints {
-                        if let videoTime = point.videoTimestamp {
-                            pointTimestamps.append(videoTime)
-                        }
-                    }
-
-                    // Restore pending highlight if any
-                    if let pending = scoreState.pendingHighlight {
-                        pendingHighlightId = pending.id
-                    }
-
-                    // Set game start time (sum of all completed game durations)
-                    currentGameStartTime = scoreState.currentMatchGames.reduce(0) { $0 + ($1.duration ?? 0) }
-                }
-
-                Log.match.info(
-                    "Loaded match state: \(self.scoreState.playerOneGames)-\(self.scoreState.playerTwoGames), Recording: \(self.isRecording)"
-                )
             }
+
+            isRecording = scoreState.isRecording
+            if scoreState.isRecording, let startTime = scoreState.recordingStartTime {
+                recordingDuration = Date().timeIntervalSince(startTime)
+                startDurationTimer(from: startTime)
+            }
+
+            Log.match.info(
+                "Loaded match state: \(self.scoreState.playerOneGames)-\(self.scoreState.playerTwoGames), Recording: \(self.isRecording)"
+            )
         } catch {
             Log.match.error("Error loading active match: \(error)")
         }
@@ -204,9 +172,28 @@ class WatchConnectivityManager: NSObject {
             guard let match = try eventStore.getMatch(id: matchId) else { return }
             let events = try eventStore.getEvents(matchId: matchId)
             scoreState = try stateProjector.project(events: events, matchMetadata: match)
-            currentGameNumber = scoreState.currentMatchGames.count
+            syncCaches(with: scoreState)
         } catch {
             Log.match.error("Error refreshing state: \(error)")
+        }
+    }
+
+    /// Re-derives the manager-side caches from a freshly projected state (after undo or relaunch).
+    private func syncCaches(with state: ScoreState) {
+        currentGameNumber = state.currentMatchGames.count
+        pointTimestamps =
+            state.currentMatchGames.flatMap { $0.points.compactMap(\.videoTimestamp) }
+            + state.currentGamePoints.compactMap(\.videoTimestamp)
+        pendingHighlightId = state.pendingHighlight?.id
+        currentGameStartTime = state.currentMatchGames.reduce(0) { $0 + ($1.duration ?? 0) }
+    }
+
+    private func startDurationTimer(from startTime: Date) {
+        durationTimer?.invalidate()
+        durationTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.recordingDuration = Date().timeIntervalSince(startTime)
+            }
         }
     }
 
@@ -284,63 +271,41 @@ class WatchConnectivityManager: NSObject {
 
     // MARK: - Recording Control
 
+    /// Marks the match as live (watch scoring, point timestamps, highlights) and, when the camera is
+    /// enabled, starts video capture. The match is live even without a camera.
     func startRecording() {
-        Log.match.debug("🔴 startRecording called")
-
-        // Check if camera recording is enabled
-        let cameraEnabled = preferencesService.isCameraEnabled()
-        Log.match.debug("🔴 Camera recording enabled: \(cameraEnabled)")
-
-        // Use the pre-created video URL (set in setMatchName)
-        guard let fileURL = currentVideoURL else {
-            Log.match.error("⚠️ No video URL set - cannot start recording")
+        guard currentMatchId != nil else {
+            Log.match.error("⚠️ startRecording called without an active match")
             return
         }
+        let cameraEnabled = preferencesService.isCameraEnabled()
+        Log.match.debug("🔴 startRecording (camera enabled: \(cameraEnabled), simulator: \(self.isRunningOnSimulator))")
 
-        Log.match.debug("🔴 Video URL: \(fileURL.lastPathComponent)")
-        Log.match.debug("🔴 Simulator mode: \(self.isRunningOnSimulator)")
-
-        Log.match.debug("🔴 Initializing recording state")
         pointTimestamps = []
         currentGameStartTime = 0  // First game starts at 0
-        recordingDuration = 0  // Reset duration for new recording
+        recordingDuration = 0
 
+        let startTime = Date()
         scoreState.isRecording = true
-        scoreState.recordingStartTime = Date()
+        scoreState.recordingStartTime = startTime
         isRecording = true
+        startDurationTimer(from: startTime)
 
-        Log.match.debug("🔴 Starting duration timer")
-        // Start duration timer - capture startTime to avoid accessing MainActor property in timer
-        let startTime = scoreState.recordingStartTime ?? Date()
-        durationTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self else { return }
-                self.recordingDuration = Date().timeIntervalSince(startTime)
-            }
-        }
-
-        // Only setup video recording on real device and if camera is enabled
-        guard cameraEnabled else {
-            Log.match.debug("⏭️ Camera disabled - skipping video recording setup")
-            return
-        }
-        if !isRunningOnSimulator {
-            Log.match.debug("🔴 Setting up video recording on real device")
+        if cameraEnabled, let fileURL = currentVideoURL, !isRunningOnSimulator {
+            Log.match.debug("🔴 Setting up video recording to \(fileURL.lastPathComponent)")
             setupVideoRecording { [weak self] in
                 Task { @MainActor in
                     guard let self else { return }
-                    Log.match.debug("🔴 Capture session is ready, now starting recording to file: \(fileURL.path)")
                     self.videoManager?.startRecording(to: fileURL)
-                    Log.match.debug("🔴 VideoManager startRecording called")
                 }
             }
+        } else if cameraEnabled {
+            Log.match.warning("⚠️ Simulator or no video URL - a mock video is generated at match end")
         } else {
-            Log.match.warning("⚠️ Running on simulator - using mock video recording")
+            Log.match.debug("⏭️ Camera disabled - scoring only")
         }
 
-        Log.match.debug("🔴 Sending score to watch")
         sendScore()
-        Log.match.debug("🔴 Recording initialization complete (actual recording will start when session is ready)")
     }
 
     /// Stops recording and returns the finished movie file once AVFoundation has finalized it.
@@ -385,26 +350,33 @@ class WatchConnectivityManager: NSObject {
         scorePoint(forPlayer: 1)
     }
 
-    func decrementPlayer1() {
-        // Decrement is now handled by undo
-        // This method is deprecated but kept for compatibility
-        guard scoreState.playerOneScore > 0 else { return }
-        scoreState.playerOneScore -= 1
-        removeLastPointIfPlayer(1)
-        sendScore()
-    }
-
     func incrementPlayer2() {
         scorePoint(forPlayer: 2)
     }
 
-    func decrementPlayer2() {
-        // Decrement is now handled by undo
-        // This method is deprecated but kept for compatibility
-        guard scoreState.playerTwoScore > 0 else { return }
-        scoreState.playerTwoScore -= 1
-        removeLastPointIfPlayer(2)
-        sendScore()
+    /// Player who scored the most recent live point of the current game, if any.
+    var lastPointPlayer: Int? {
+        scoreState.currentGamePoints.last?.player
+    }
+
+    /// Removes the last point if `player` scored it, through the event log so undo and relaunch agree.
+    func undoPoint(forPlayer player: Int) {
+        guard lastPointPlayer == player else { return }
+        undoLastAction()
+    }
+
+    /// Undoes the most recent point or highlight mark in the current game.
+    func undoLastAction() {
+        guard let matchId = currentMatchId else { return }
+        do {
+            if try undoService.undoLastAction(in: matchId) != nil {
+                matchWonBy = nil
+                refreshState()
+                sendScore()
+            }
+        } catch {
+            Log.match.error("Error undoing: \(error)")
+        }
     }
 
     private func scorePoint(forPlayer player: Int) {
@@ -420,7 +392,6 @@ class WatchConnectivityManager: NSObject {
                 servingPlayer: scoreState.servingPlayer
             )
 
-            // Create PointScoredEvent
             let event = PointScoredEvent(
                 matchId: matchId,
                 sequenceNumber: try eventStore.getNextSequenceNumber(matchId: matchId),
@@ -428,7 +399,6 @@ class WatchConnectivityManager: NSObject {
                 videoTimestamp: recordingDuration,
                 gameNumber: currentGameNumber
             )
-
             try eventStore.append(event: event)
 
             // Capture orientation after first point (phone is now in stable position)
@@ -438,7 +408,6 @@ class WatchConnectivityManager: NSObject {
                 Log.match.debug("📱 Export orientation captured: \(orientation)")
             }
 
-            // Update state
             if player == 1 {
                 scoreState.playerOneScore += 1
             } else {
@@ -446,7 +415,6 @@ class WatchConnectivityManager: NSObject {
             }
             recordPoint(forPlayer: player, wasServing: wasServing)
 
-            // Recalculate current server based on new score
             scoreState.servingPlayer = ServingLogic.calculateCurrentServer(
                 firstServer: scoreState.currentGameFirstServer ?? 1,
                 playerOneScore: scoreState.playerOneScore,
@@ -456,9 +424,15 @@ class WatchConnectivityManager: NSObject {
             // Attribute any pending highlight to this player
             attributePendingHighlight(toPlayer: player, matchId: matchId)
 
-            sendScore()
+            // First to 11, win by 2: the game ends itself
+            if let gameWinner = ScoreAnnouncementUtils.checkGameWon(
+                playerOneScore: scoreState.playerOneScore, playerTwoScore: scoreState.playerTwoScore)
+            {
+                finalizeGame(winner: gameWinner)
+                return
+            }
 
-            // Announce the new score
+            sendScore()
             scoreAnnouncer.announceScore(
                 playerOneScore: scoreState.playerOneScore,
                 playerTwoScore: scoreState.playerTwoScore,
@@ -478,34 +452,34 @@ class WatchConnectivityManager: NSObject {
         }
 
         do {
-            // Create attribution event
             let attributionEvent = HighlightAttributedEvent(
                 matchId: matchId,
                 sequenceNumber: try eventStore.getNextSequenceNumber(matchId: matchId),
                 highlightEventId: highlightId,
                 player: player
             )
-
             try eventStore.append(event: attributionEvent)
 
-            // Update the highlight clip with player info
-            let attributedClip = HighlightClip(
-                id: pendingHighlight.id,
-                startTimestamp: pendingHighlight.startTimestamp,
-                endTimestamp: pendingHighlight.endTimestamp,
-                player: player,
-                gameNumber: pendingHighlight.gameNumber
+            scoreState.highlightClips.append(
+                HighlightClip(
+                    id: pendingHighlight.id,
+                    startTimestamp: pendingHighlight.startTimestamp,
+                    endTimestamp: pendingHighlight.endTimestamp,
+                    player: player,
+                    gameNumber: pendingHighlight.gameNumber
+                )
             )
-
-            scoreState.highlightClips.append(attributedClip)
             scoreState.pendingHighlight = nil
             pendingHighlightId = nil
-
-            let playerName = player == 1 ? scoreState.playerOneName : scoreState.playerTwoName
-            Log.match.info("⭐ Highlight attributed to \(playerName ?? "P\(player)")")
+            Log.match.info("⭐ Highlight attributed to \(self.name(for: player))")
         } catch {
             Log.match.error("Error attributing highlight: \(error)")
         }
+    }
+
+    /// Display name for player 1 or 2.
+    func name(for player: Int) -> String {
+        player == 1 ? (scoreState.playerOneName ?? "Player 1") : (scoreState.playerTwoName ?? "Player 2")
     }
 
     // MARK: - Point Recording
@@ -531,15 +505,6 @@ class WatchConnectivityManager: NSObject {
         Log.match.debug(
             "Point recorded at \(String(format: "%.1f", videoTimestamp))s for P\(player)\(wasServing ? " (serving)" : "")"
         )
-    }
-
-    private func removeLastPointIfPlayer(_ player: Int) {
-        if let last = scoreState.currentGamePoints.last, last.player == player {
-            scoreState.currentGamePoints.removeLast()
-            if !pointTimestamps.isEmpty {
-                pointTimestamps.removeLast()
-            }
-        }
     }
 
     // MARK: - Highlight Sound
@@ -599,8 +564,19 @@ class WatchConnectivityManager: NSObject {
                 gameNumber: currentGameNumber
             )
 
-            scoreState.pendingHighlight = pendingClip
-            pendingHighlightId = highlightEvent.id
+            if let pending = scoreState.pendingHighlight {
+                // Second mark before the next point: same rally, extend the pending clip (first id wins)
+                scoreState.pendingHighlight = HighlightClip(
+                    id: pending.id,
+                    startTimestamp: pending.startTimestamp,
+                    endTimestamp: max(pending.endTimestamp, highlightTimestamp),
+                    player: nil,
+                    gameNumber: pending.gameNumber
+                )
+            } else {
+                scoreState.pendingHighlight = pendingClip
+                pendingHighlightId = highlightEvent.id
+            }
 
             // Send immediate confirmation to watch with updated highlight count
             sendHighlightConfirmation()
@@ -622,19 +598,35 @@ class WatchConnectivityManager: NSObject {
         sendScore()
     }
 
-    func endGame() {
-        guard let matchId = currentMatchId else {
+    /// Ends the current game. Without `force` the game must be won (11+, two clear); with `force`
+    /// (an explicit user decision) an unfinished game is awarded to the leader. Ties are never ended.
+    @discardableResult
+    func endGame(force: Bool = false) -> Bool {
+        guard currentMatchId != nil else {
             Log.match.debug("No active match")
-            return
+            return false
         }
+        let p1 = scoreState.playerOneScore
+        let p2 = scoreState.playerTwoScore
+        let winner: Int
+        if let won = ScoreAnnouncementUtils.checkGameWon(playerOneScore: p1, playerTwoScore: p2) {
+            winner = won
+        } else if force, p1 != p2 {
+            winner = p1 > p2 ? 1 : 2
+        } else {
+            Log.match.warning("End game ignored: \(p1)-\(p2) is not a finished game")
+            sendScore()  // resync the watch so it does not wait on a dropped command
+            return false
+        }
+        finalizeGame(winner: winner)
+        return true
+    }
 
-        let winner = scoreState.playerOneScore > scoreState.playerTwoScore ? 1 : 2
-
-        // Calculate game duration
+    private func finalizeGame(winner: Int) {
+        guard let matchId = currentMatchId else { return }
         let gameDuration = recordingDuration - currentGameStartTime
 
         do {
-            // Create GameEndedEvent
             let event = GameEndedEvent(
                 matchId: matchId,
                 sequenceNumber: try eventStore.getNextSequenceNumber(matchId: matchId),
@@ -644,10 +636,8 @@ class WatchConnectivityManager: NSObject {
                 winner: winner,
                 gameDuration: gameDuration
             )
-
             try eventStore.append(event: event)
 
-            // Update state (dual-write for now)
             let game = GameResult(
                 playerOneScore: scoreState.playerOneScore,
                 playerTwoScore: scoreState.playerTwoScore,
@@ -657,7 +647,6 @@ class WatchConnectivityManager: NSObject {
                 duration: gameDuration,
                 firstServer: scoreState.currentGameFirstServer ?? 1
             )
-
             scoreState.currentMatchGames.append(game)
 
             if winner == 1 {
@@ -666,28 +655,37 @@ class WatchConnectivityManager: NSObject {
                 scoreState.playerTwoGames += 1
             }
 
-            // Determine first server for next game (alternate from current game)
+            // First server alternates between games
             if let firstServerThisGame = scoreState.currentGameFirstServer {
                 let nextServer = firstServerThisGame == 1 ? 2 : 1
                 scoreState.currentGameFirstServer = nextServer
                 scoreState.servingPlayer = nextServer
             }
 
-            // Reset for next game (keep video timestamps for highlight reel)
             scoreState.playerOneScore = 0
             scoreState.playerTwoScore = 0
             scoreState.currentGamePoints = []
-
-            // Track start of next game
             currentGameStartTime = recordingDuration
             currentGameNumber += 1
 
-            sendScore()
-
-            Log.match.info(
-                "Game ended: \(game.playerOneScore)-\(game.playerTwoScore) (duration: \(String(format: "%.1f", gameDuration))s)"
+            let matchWinner = ScoreAnnouncementUtils.checkMatchWon(
+                playerOneGames: scoreState.playerOneGames,
+                playerTwoGames: scoreState.playerTwoGames,
+                bestOf: Self.bestOf
             )
-            Log.match.debug("Next game first server: Player \(self.scoreState.currentGameFirstServer ?? 1)")
+            matchWonBy = matchWinner
+            if let matchWinner {
+                scoreAnnouncer.announce(
+                    "Game and match to \(name(for: matchWinner)), \(scoreState.playerOneGames) games to \(scoreState.playerTwoGames)"
+                )
+            } else {
+                scoreAnnouncer.announce("Game to \(name(for: winner)), \(game.playerOneScore) \(game.playerTwoScore)")
+            }
+
+            sendScore()
+            Log.match.info(
+                "Game ended: \(game.playerOneScore)-\(game.playerTwoScore) (duration: \(String(format: "%.1f", gameDuration))s), games \(self.scoreState.playerOneGames)-\(self.scoreState.playerTwoGames)"
+            )
         } catch {
             Log.match.error("Error ending game: \(error)")
         }
@@ -745,7 +743,8 @@ class WatchConnectivityManager: NSObject {
         orientation: MediaExportService.VideoOrientation,
         progressHandler: @escaping MediaExportService.ProgressHandler
     ) async -> URL? {
-        let highlightClips = scoreState.highlightClips
+        // A highlight marked after the final point is still pending; it belongs in the reel too
+        let highlightClips = scoreState.highlightClips + (scoreState.pendingHighlight.map { [$0] } ?? [])
         guard !highlightClips.isEmpty else {
             Log.match.debug("No highlights marked - only saving full video")
             return nil
@@ -883,8 +882,9 @@ class WatchConnectivityManager: NSObject {
             // Delete match and all events from database
             try eventStore.deleteMatch(id: matchId)
 
-            // Reset everything
+            // Reset everything and tell the watch the match is gone
             resetMatchState()
+            sendScore()
 
             Log.match.debug("Match cancelled and deleted")
         } catch {
@@ -892,23 +892,65 @@ class WatchConnectivityManager: NSObject {
         }
     }
 
+    /// Stops recording, exports the videos and finalizes the active match. Concurrent calls are ignored.
+    func finishActiveMatch() async {
+        guard !isExporting, let matchId = currentMatchId else { return }
+        isExporting = true
+        exportProgress = 0
+        defer { isExporting = false }
+
+        let videoURL = await stopRecording()
+        let (fullVideo, highlightReel) = await exportMatchVideos(from: videoURL) { [weak self] progress in
+            self?.exportProgress = progress
+        }
+        endMatch(matchId: matchId, fullVideoURL: fullVideo, highlightVideoURL: highlightReel)
+    }
+
+    /// Called when the watch asks to end the match; GameView runs the same flow as the phone button.
+    func requestEndMatchFromWatch() {
+        guard currentMatchId != nil else { return }
+        endMatchRequestCount += 1
+        Log.match.debug("Command: endMatch from watch (request #\(self.endMatchRequestCount))")
+    }
+
     func endMatch(fullVideoURL: URL?, highlightVideoURL: URL?) {
-        guard let matchId = currentMatchId else {
-            Log.match.debug("No active match to end")
+        endMatch(matchId: currentMatchId, fullVideoURL: fullVideoURL, highlightVideoURL: highlightVideoURL)
+    }
+
+    /// Finalizes `matchId`. A finished game that was not yet recorded is saved; an unfinished game is
+    /// discarded, never awarded. The match winner is by games; a tie has no winner.
+    func endMatch(matchId: UUID?, fullVideoURL: URL?, highlightVideoURL: URL?) {
+        guard let matchId, matchId == currentMatchId else {
+            Log.match.warning("No active match to end (requested \(matchId?.uuidString ?? "nil"))")
             return
         }
 
-        // Auto-save current game if there are any points scored
-        if scoreState.playerOneScore > 0 || scoreState.playerTwoScore > 0 {
+        let p1 = scoreState.playerOneScore
+        let p2 = scoreState.playerTwoScore
+        if ScoreAnnouncementUtils.checkGameWon(playerOneScore: p1, playerTwoScore: p2) != nil {
             endGame()
+        } else if p1 > 0 || p2 > 0 {
+            Log.match.info("Discarding unfinished game \(p1)-\(p2)")
         }
 
-        let winner = scoreState.playerOneGames > scoreState.playerTwoGames ? 1 : 2
+        let games1 = scoreState.playerOneGames
+        let games2 = scoreState.playerTwoGames
+        let winner: Int
+        if let decided = ScoreAnnouncementUtils.checkMatchWon(
+            playerOneGames: games1, playerTwoGames: games2, bestOf: Self.bestOf)
+        {
+            winner = decided
+        } else if games1 != games2 {
+            winner = games1 > games2 ? 1 : 2  // ended early: leader on games
+        } else {
+            winner = MatchResult.noWinner
+        }
+
         scoreAnnouncer.announceMatchEnd(
             playerOneName: scoreState.playerOneName,
             playerTwoName: scoreState.playerTwoName,
-            playerOneGames: scoreState.playerOneGames,
-            playerTwoGames: scoreState.playerTwoGames,
+            playerOneGames: games1,
+            playerTwoGames: games2,
             winner: winner
         )
 
@@ -921,16 +963,18 @@ class WatchConnectivityManager: NSObject {
             )
             scoreState.matchHistory.append(matchResult)
 
-            // Auto-generate AI summary in background
-            let historySnapshot = scoreState.matchHistory
-            Task {
-                await generateAISummary(for: matchResult, matchId: matchId, allMatches: historySnapshot)
+            // Auto-generate AI summary in background (only for decided matches)
+            if matchResult.hasWinner {
+                let historySnapshot = scoreState.matchHistory
+                Task {
+                    await generateAISummary(for: matchResult, matchId: matchId, allMatches: historySnapshot)
+                }
             }
 
             resetMatchState()
             sendScore()
             Log.match.info(
-                "Match ended - Full video: \(fullVideoURL?.lastPathComponent ?? "none"), Highlights: \(highlightVideoURL?.lastPathComponent ?? "none")"
+                "Match ended \(games1)-\(games2) (winner \(winner)) - Full video: \(fullVideoURL?.lastPathComponent ?? "none"), Highlights: \(highlightVideoURL?.lastPathComponent ?? "none")"
             )
         } catch {
             Log.match.error("Error ending match: \(error)")
@@ -971,7 +1015,10 @@ class WatchConnectivityManager: NSObject {
         }
 
         return MatchResult(
+            id: matchId,
             name: scoreState.currentMatchName,
+            playerOneName: scoreState.playerOneName,
+            playerTwoName: scoreState.playerTwoName,
             playerOneGames: scoreState.playerOneGames,
             playerTwoGames: scoreState.playerTwoGames,
             winner: winner,
@@ -1064,8 +1111,10 @@ class WatchConnectivityManager: NSObject {
         durationTimer?.invalidate()
         durationTimer = nil
 
-        // Reset watch signal
-        shouldEndMatchFromWatch = false
+        // Reset UI signals
+        endMatchRequestCount = 0
+        matchWonBy = nil
+        exportProgress = 0
     }
 
     /// Resets all state for a new match

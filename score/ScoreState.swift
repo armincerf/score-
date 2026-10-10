@@ -105,23 +105,41 @@ nonisolated struct GameResult: Codable, Sendable {
 
 // MARK: - Match Result
 
-nonisolated struct MatchResult: Codable, Sendable {
-    let name: String?  // Match name (e.g., "John vs Jane")
+nonisolated struct MatchResult: Codable, Sendable, Identifiable {
+    /// `winner` value for a match that ended without a winner (abandoned, or tied on games).
+    static let noWinner = 0
+
+    let id: UUID  // StoredMatch.id
+    let name: String?  // Display name, e.g. "John vs Jane - 10 Oct 2026 at 15:00"
+    let playerOneName: String?
+    let playerTwoName: String?
     let playerOneGames: Int
     let playerTwoGames: Int
-    let winner: Int  // 1 or 2
+    let winner: Int  // 1, 2 or MatchResult.noWinner
     let games: [GameResult]
     let timestamp: Date
-    let fullVideoURL: String?  // Path to full unedited video
-    let highlightVideoURL: String?  // Path to generated highlight reel
+    let fullVideoURL: String?  // Stored video reference; resolve with VideoStore before use
+    let highlightVideoURL: String?  // Stored highlight reel reference
     let duration: TimeInterval?  // Total match duration in seconds
 
     init(
-        name: String? = nil, playerOneGames: Int, playerTwoGames: Int, winner: Int, games: [GameResult],
-        timestamp: Date = Date(), fullVideoURL: String? = nil, highlightVideoURL: String? = nil,
+        id: UUID = UUID(),
+        name: String? = nil,
+        playerOneName: String? = nil,
+        playerTwoName: String? = nil,
+        playerOneGames: Int,
+        playerTwoGames: Int,
+        winner: Int,
+        games: [GameResult],
+        timestamp: Date = Date(),
+        fullVideoURL: String? = nil,
+        highlightVideoURL: String? = nil,
         duration: TimeInterval? = nil
     ) {
+        self.id = id
         self.name = name
+        self.playerOneName = playerOneName
+        self.playerTwoName = playerTwoName
         self.playerOneGames = playerOneGames
         self.playerTwoGames = playerTwoGames
         self.winner = winner
@@ -130,6 +148,36 @@ nonisolated struct MatchResult: Codable, Sendable {
         self.fullVideoURL = fullVideoURL
         self.highlightVideoURL = highlightVideoURL
         self.duration = duration
+    }
+
+    /// Tolerant decoding: payloads written before `id` and the player names existed still decode.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try container.decodeIfPresent(String.self, forKey: .name)
+        playerOneName = try container.decodeIfPresent(String.self, forKey: .playerOneName)
+        playerTwoName = try container.decodeIfPresent(String.self, forKey: .playerTwoName)
+        playerOneGames = try container.decode(Int.self, forKey: .playerOneGames)
+        playerTwoGames = try container.decode(Int.self, forKey: .playerTwoGames)
+        winner = try container.decode(Int.self, forKey: .winner)
+        games = try container.decode([GameResult].self, forKey: .games)
+        timestamp = try container.decode(Date.self, forKey: .timestamp)
+        fullVideoURL = try container.decodeIfPresent(String.self, forKey: .fullVideoURL)
+        highlightVideoURL = try container.decodeIfPresent(String.self, forKey: .highlightVideoURL)
+        duration = try container.decodeIfPresent(TimeInterval.self, forKey: .duration)
+    }
+
+    var hasWinner: Bool {
+        winner == 1 || winner == 2
+    }
+
+    /// Name of the winner, or nil for a match without one.
+    var winnerName: String? {
+        switch winner {
+        case 1: return playerOneName ?? "Player 1"
+        case 2: return playerTwoName ?? "Player 2"
+        default: return nil
+        }
     }
 
     // MARK: - Statistics
@@ -290,10 +338,6 @@ nonisolated struct ScoreState: Codable, Sendable {
         // Encode complex types to Data
         if let gamesData = try? JSONEncoder().encode(currentMatchGames) {
             dict["currentMatchGames"] = gamesData
-        }
-
-        if let matchData = try? JSONEncoder().encode(matchHistory) {
-            dict["matchHistory"] = matchData
         }
 
         if let pointsData = try? JSONEncoder().encode(currentGamePoints) {

@@ -138,8 +138,7 @@ struct WatchCommandTests {
         let firstServer = try #require(manager.scoreState.currentGameFirstServer)
         let sequence = [1, 1, 1, 2, 1, 1, 2, 1, 1, 1, 2, 1, 1, 1]  // 11-3
         score(sequence)
-        #expect(manager.scoreState.playerOneScore == 11 && manager.scoreState.playerTwoScore == 3)
-
+        // 11-3 ends the game by itself; a stray End Game from the watch at 0-0 must then be a no-op
         send(["command": "endGame"])
 
         let all = try events(matchId)
@@ -201,10 +200,7 @@ struct WatchCommandTests {
     // With the camera disabled setMatchName leaves currentVideoURL nil, and startRecording() guards on it before
     // it arms any recording state. So isRecording stays false, recordPoint/markHighlight are skipped (GameResult.points
     // is empty, highlights are dropped) and the watch, which shows scoring only while isRecording, never does.
-    @Test(
-        "startRecording arms recording state when the camera is disabled",
-        .disabled(
-            "BUG: startRecording() returns early when currentVideoURL is nil (camera off); isRecording stays false"))
+    @Test("startRecording arms recording state when the camera is disabled")
     func recordingWithoutCamera() throws {
         UserPreferencesService(modelContext: container.mainContext).setCameraEnabled(false)
         try startMatch()
@@ -240,7 +236,7 @@ struct WatchCommandTests {
     func endMatchCommand() throws {
         let matchId = try startMatch()
         send(["command": "endMatch"])
-        #expect(manager.shouldEndMatchFromWatch && manager.currentMatchId == matchId)
+        #expect(manager.endMatchRequestCount > 0 && manager.currentMatchId == matchId)
         #expect(try eventStore.getMatch(id: matchId)?.isActive == true)
         #expect(manager.scoreState.matchHistory.isEmpty)
     }
@@ -259,13 +255,7 @@ struct WatchCommandTests {
     // scoreState. That drops highlightClips, pendingHighlight and the names, and leaves scoreState out of step
     // with the event store and the manager's private game/highlight bookkeeping. Latent today; live the moment
     // an older watch build (or a reinstated sendScore) pushes its state up.
-    @Test(
-        "A full score payload from the watch does not overwrite the phone's event-sourced state",
-        .disabled(
-            """
-            BUG: handleMessageData replaces scoreState wholesale with any command-less payload that decodes as a \
-            ScoreState, although the phone's events are the source of truth and the watch is only a mirror.
-            """))
+    @Test("A full score payload from the watch does not overwrite the phone's event-sourced state")
     func statePayloadDoesNotOverwrite() throws {
         try startMatch()
         let before = manager.scoreState
@@ -304,27 +294,27 @@ struct WatchCommandTests {
         manager.endGame()
         score(Array(repeating: 1, count: 11))
         manager.endGame()
-        score([2, 2, 2])  // open game, auto-ended as a win for player 2
+        score([2, 2, 2])  // open, unfinished game: discarded, never awarded
 
         manager.endMatch(fullVideoURL: nil, highlightVideoURL: nil)
 
         let result = try #require(manager.scoreState.matchHistory.first)
         #expect(manager.scoreState.matchHistory.count == 1 && result.name == "Ann vs Bob")
-        #expect(result.playerOneGames == 2 && result.playerTwoGames == 1 && result.winner == 1)
-        #expect(result.games.count == 3 && result.totalPoints == 25)
-        #expect(result.games.last?.winner == 2 && result.games.last?.playerTwoScore == 3)
+        #expect(result.id == matchId && result.playerOneName == "Ann" && result.playerTwoName == "Bob")
+        #expect(result.playerOneGames == 2 && result.playerTwoGames == 0 && result.winner == 1)
+        #expect(result.games.count == 2 && result.totalPoints == 22)
 
         let stored = try #require(try eventStore.getMatch(id: matchId))
         #expect(!stored.isActive && stored.endTimestamp != nil)
-        #expect(stored.playerOneGames == 2 && stored.playerTwoGames == 1 && stored.winner == 1)
+        #expect(stored.playerOneGames == 2 && stored.playerTwoGames == 0 && stored.winner == 1)
         #expect(try eventStore.getActiveMatch() == nil)
 
         let all = try events(matchId)
         #expect(all.map(\.sequenceNumber) == Array(0..<all.count))
-        #expect(all.filter { $0.eventType == EventType.gameEnded.rawValue }.count == 3)
+        #expect(all.filter { $0.eventType == EventType.gameEnded.rawValue }.count == 2)
         #expect(all.last?.eventType == EventType.matchEnded.rawValue)
         let ended = try decode(MatchEndedEvent.self, all.last)
-        #expect(ended.playerOneGames == 2 && ended.playerTwoGames == 1 && ended.winner == 1)
+        #expect(ended.playerOneGames == 2 && ended.playerTwoGames == 0 && ended.winner == 1)
 
         #expect(manager.currentMatchId == nil && !manager.isRecording && !manager.scoreState.isRecording)
         #expect(manager.scoreState.playerOneGames == 0 && manager.scoreState.currentMatchGames.isEmpty)
@@ -337,14 +327,7 @@ struct WatchCommandTests {
     // endGame() picks `winner = p1 > p2 ? 1 : 2`, so a tied game (including 0-0 from a stray watch endGame)
     // is credited to player 2, and endMatch() auto-ends any open game with points in it. With games 1-0 and the
     // open game tied, player 2 is handed the game and, via the same `>` test at match level, the match.
-    @Test(
-        "endMatch with a tied open game does not hand the game and the match to player 2",
-        .disabled(
-            """
-            BUG: endGame awards a tied game to player 2 (winner = p1 > p2 ? 1 : 2) and endMatch auto-ends the open \
-            game, so 1-0 in games plus an open 2-2 game ends as a 1-1 draw that the same comparison gives to \
-            player 2.
-            """))
+    @Test("endMatch with a tied open game does not hand the game and the match to player 2")
     func endMatchTiedOpenGame() throws {
         try startMatch()
         score(Array(repeating: 1, count: 11))

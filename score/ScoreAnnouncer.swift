@@ -56,6 +56,12 @@ class ScoreAnnouncer: NSObject {
         speak(announcement.text)
     }
 
+    /// Speaks arbitrary text (used for "Game to Ann", "Match to Bob").
+    func announce(_ text: String) {
+        guard isEnabled else { return }
+        speak(text)
+    }
+
     func announceMatchEnd(
         playerOneName: String?,
         playerTwoName: String?,
@@ -65,10 +71,13 @@ class ScoreAnnouncer: NSObject {
     ) {
         guard isEnabled else { return }
 
-        let winnerName = winner == 1 ? (playerOneName ?? "Player 1") : (playerTwoName ?? "Player 2")
         let score = "\(playerOneGames) to \(playerTwoGames)"
-        let text = "Match complete! \(winnerName) wins \(score)!"
-
+        let text: String
+        switch winner {
+        case 1: text = "Match complete! \(playerOneName ?? "Player 1") wins \(score)!"
+        case 2: text = "Match complete! \(playerTwoName ?? "Player 2") wins \(score)!"
+        default: text = "Match over, \(playerOneGames) games all."
+        }
         speak(text)
     }
 

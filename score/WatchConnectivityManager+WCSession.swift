@@ -18,20 +18,20 @@ extension WatchConnectivityManager: WCSessionDelegate {
         let isReachable = session.isReachable
         let isPaired = session.isPaired
         let isWatchAppInstalled = session.isWatchAppInstalled
-        let hasContext = !session.applicationContext.isEmpty
 
         Task { @MainActor in
             self.isWatchReachable = isReachable
             self.isWatchAppInstalled = isPaired && isWatchAppInstalled
-            if hasContext {
-                self.isWatchAppInstalled = true
-            }
         }
         Log.match.info(
             "Session activated: \(activationState.rawValue), Paired: \(isPaired), Watch app installed: \(isWatchAppInstalled), Reachable: \(isReachable)"
         )
-        if hasContext {
-            Log.match.debug("Watch app detected via application context")
+    }
+
+    nonisolated func sessionWatchStateDidChange(_ session: WCSession) {
+        let installed = session.isPaired && session.isWatchAppInstalled
+        Task { @MainActor in
+            self.isWatchAppInstalled = installed
         }
     }
 
@@ -100,12 +100,11 @@ extension WatchConnectivityManager: WCSessionDelegate {
                 Log.match.debug("Command: highlight from watch")
 
             case "endGame":
-                self.endGame()
+                // The watch has no score validation; the phone only ends finished or led games
+                self.endGame(force: true)
 
             case "endMatch":
-                // Watch requested match end - signal GameView to trigger the same flow as phone button
-                self.shouldEndMatchFromWatch = true
-                Log.match.debug("Command: endMatch from watch - signaling GameView")
+                self.requestEndMatchFromWatch()
 
             case "requestSync":
                 self.sendScore()
@@ -117,12 +116,9 @@ extension WatchConnectivityManager: WCSessionDelegate {
             return
         }
 
-        // Parse as full state update (shouldn't happen often - watch sends commands)
-        guard let newState = messageData.scoreState else {
-            return
+        // The watch only mirrors the phone's state; a command-less payload is never applied
+        if messageData.scoreState != nil {
+            Log.match.debug("Ignoring state payload from watch (phone is the source of truth)")
         }
-
-        self.scoreState = newState
-        Log.match.debug("Received state update")
     }
 }

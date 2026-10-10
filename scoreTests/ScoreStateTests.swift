@@ -19,7 +19,7 @@ struct ScoreStateTests {
     private static let watchKeys: Set<String> = [
         "playerOneScore", "playerTwoScore", "playerOneGames", "playerTwoGames", "isRecording",
         "playerOneName", "playerTwoName", "servingPlayer", "currentGameFirstServer", "recordingStartTime",
-        "currentMatchGames", "matchHistory", "currentGamePoints", "highlightCount", "hasPendingHighlight",
+        "currentMatchGames", "currentGamePoints", "highlightCount", "hasPendingHighlight",
     ]
     private static let startTime = Date(timeIntervalSince1970: 1_700_000_000)
 
@@ -99,7 +99,7 @@ struct ScoreStateTests {
         #expect(restored.playerOneName == "Ann" && restored.playerTwoName == "Bob" && restored.servingPlayer == 2)
         #expect(restored.currentMatchName == "Ann vs Bob" && restored.currentGameFirstServer == 2)
         #expect(try Self.json(restored.currentMatchGames) == Self.json(original.currentMatchGames))
-        #expect(try Self.json(restored.matchHistory) == Self.json(original.matchHistory))
+        #expect(restored.matchHistory.isEmpty)  // match history is phone-only (unbounded, never sent)
         #expect(try Self.json(restored.currentGamePoints) == Self.json(original.currentGamePoints))
         // Clips are phone-only state: the watch receives a count and a pending flag instead
         #expect(dict["highlightCount"] as? Int == 2 && dict["hasPendingHighlight"] as? Bool == true)
@@ -121,7 +121,7 @@ struct ScoreStateTests {
             #expect(value is NSNumber || value is String || value is Data, "\(key) is \(type(of: value))")
         }
         #expect(dict["recordingStartTime"] as? TimeInterval == Self.startTime.timeIntervalSince1970)
-        #expect(dict["currentMatchGames"] is Data && dict["matchHistory"] is Data && dict["currentGamePoints"] is Data)
+        #expect(dict["currentMatchGames"] is Data && dict["currentGamePoints"] is Data && dict["matchHistory"] == nil)
     }
 
     @Test(
@@ -224,15 +224,7 @@ struct ScoreStateTests {
         #expect(empty.serveWinPercentageP1 == nil && empty.serveWinPercentageP2 == nil)
     }
 
-    @Test(
-        "Serve win percentage divides by the serves each player actually took",
-        .disabled(
-            """
-            BUG: ServingLogic.calculateTotalServes evaluates the server at synthetic scores (p1 = min(i, finalP1), \
-            p2 jumps straight to finalP2 once i >= finalP2) instead of walking real point totals, so for 11-4 with \
-            P1 serving first it counts 6/9 serves instead of 8/7. MatchResult.serveWinPercentage inherits that \
-            denominator and reports 100%/22.2% rather than 75%/28.6%. It is only right when one side scored 0.
-            """))
+    @Test("Serve win percentage divides by the serves each player actually took")
     func serveWinPercentageUsesActualServes() throws {
         let game = Self.makeGame(Self.elevenFour)
         let match = MatchResult(playerOneGames: 1, playerTwoGames: 0, winner: 1, games: [game])

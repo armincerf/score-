@@ -124,6 +124,11 @@ nonisolated enum ScoreAnnouncementUtils {
         return nil
     }
 
+    /// Games needed to win a best-of-`bestOf` match.
+    static func gamesToWin(bestOf: Int) -> Int {
+        (bestOf / 2) + 1
+    }
+
     static func checkMatchWon(
         playerOneGames: Int,
         playerTwoGames: Int,

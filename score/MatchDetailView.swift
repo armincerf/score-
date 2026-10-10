@@ -68,33 +68,27 @@ struct MatchDetailView: View {
     }
 
     private var playerOneName: String {
-        extractPlayerName(from: match.name, playerNumber: 1) ?? "Player 1"
+        match.playerOneName ?? extractPlayerName(from: match.name, playerNumber: 1) ?? "Player 1"
     }
 
     private var playerTwoName: String {
-        extractPlayerName(from: match.name, playerNumber: 2) ?? "Player 2"
+        match.playerTwoName ?? extractPlayerName(from: match.name, playerNumber: 2) ?? "Player 2"
     }
 
-    private func extractPlayerName(from matchName: String?, playerNumber: Int) -> String? {
-        guard let name = matchName else { return nil }
-
-        // Extract base name (before timestamp)
-        let baseName: String
-        if let dashRange = name.range(of: " - ", options: .backwards) {
-            baseName = String(name[..<dashRange.lowerBound])
-        } else {
-            baseName = name
+    private var resultBadgeText: String {
+        switch match.winner {
+        case 1: return "\(playerOneName) Wins!"
+        case 2: return "\(playerTwoName) Wins!"
+        default: return "No winner"
         }
+    }
 
-        // Split by " vs "
-        if let vsRange = baseName.range(of: " vs ") {
-            if playerNumber == 1 {
-                return String(baseName[..<vsRange.lowerBound])
-            }
-            return String(baseName[vsRange.upperBound...])
+    private var winnerColor: Color {
+        switch match.winner {
+        case 1: return .blue
+        case 2: return .red
+        default: return .gray
         }
-
-        return nil
     }
 
     var body: some View {
@@ -150,12 +144,12 @@ struct MatchDetailView: View {
                     }
 
                     // Winner badge
-                    Text(match.winner == 1 ? "\(playerOneName) Wins!" : "\(playerTwoName) Wins!")
+                    Text(resultBadgeText)
                         .font(.headline)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 8)
-                        .background(match.winner == 1 ? Color.blue.opacity(0.2) : Color.red.opacity(0.2))
-                        .foregroundColor(match.winner == 1 ? .blue : .red)
+                        .background(winnerColor.opacity(0.2))
+                        .foregroundColor(winnerColor)
                         .cornerRadius(8)
                 }
                 .padding()
@@ -404,6 +398,32 @@ struct MatchDetailView: View {
         }
 
         Log.ui.debug("Available videos count: \(availableVideos.count)")
+    }
+}
+
+// MARK: - Formatting helpers
+
+extension MatchDetailView {
+    private func extractPlayerName(from matchName: String?, playerNumber: Int) -> String? {
+        guard let name = matchName else { return nil }
+
+        // Extract base name (before timestamp)
+        let baseName: String
+        if let dashRange = name.range(of: " - ", options: .backwards) {
+            baseName = String(name[..<dashRange.lowerBound])
+        } else {
+            baseName = name
+        }
+
+        // Split by " vs "
+        if let vsRange = baseName.range(of: " vs ") {
+            if playerNumber == 1 {
+                return String(baseName[..<vsRange.lowerBound])
+            }
+            return String(baseName[vsRange.upperBound...])
+        }
+
+        return nil
     }
 
     private func formatDuration(_ seconds: TimeInterval) -> String {

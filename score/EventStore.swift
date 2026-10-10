@@ -31,6 +31,10 @@ class EventStore {
         )
 
         modelContext.insert(storedEvent)
+        // Keep the StoredMatch.events relationship populated so cascade delete and readers work
+        if let match = try getMatch(id: event.matchId) {
+            storedEvent.match = match
+        }
         try modelContext.save()
 
         Log.store.debug(

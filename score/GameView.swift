@@ -8,6 +8,7 @@
 import AVFoundation
 import SwiftData
 import SwiftUI
+import UIKit
 import os
 
 struct GameView: View {
@@ -19,9 +20,8 @@ struct GameView: View {
     @State private var showingCancelAlert = false
     @State private var canUndo = false
     @State private var captureSession: AVCaptureSession?
-    @State private var isExportingVideo = false
-    @State private var exportProgress: Double = 0.0
     @State private var showExportProgress = false
+    @State private var handledEndMatchRequest = 0
     @State private var cameraEnabled = true
 
     private var isRunningOnSimulator: Bool {
@@ -109,6 +109,8 @@ struct GameView: View {
             }
         }
         .onAppear {
+            // The phone sits on a stand during a match; never let it auto-lock mid-recording
+            UIApplication.shared.isIdleTimerDisabled = true
             Log.ui.debug("🎮 onAppear called")
             Log.ui.debug("🎮 isRecording: \(connectivity.isRecording)")
 
@@ -132,33 +134,46 @@ struct GameView: View {
             updateUndoAvailability()
             Log.ui.debug("🎮 onAppear completed")
         }
+        .onDisappear {
+            UIApplication.shared.isIdleTimerDisabled = false
+        }
         .onChange(of: connectivity.videoManager?.captureSession) { _, newSession in
             Log.ui.debug("🎮 Capture session changed: \(newSession != nil)")
             captureSession = newSession
         }
-        .onChange(of: connectivity.scoreState.playerOneScore) {
+        .onChange(of: connectivity.scoreState.currentGamePoints.count) {
             updateUndoAvailability()
         }
-        .onChange(of: connectivity.scoreState.playerTwoScore) {
+        .onChange(of: connectivity.scoreState.totalHighlightsInMatch) {
             updateUndoAvailability()
         }
-        .onChange(of: connectivity.shouldEndMatchFromWatch) { _, shouldEnd in
-            if shouldEnd {
-                // Watch requested end match - trigger the same flow as phone button
-                Task {
-                    await endMatchAndSave()
-                }
-                // Reset the signal
-                connectivity.shouldEndMatchFromWatch = false
-            }
+        .onChange(of: connectivity.endMatchRequestCount, initial: true) { _, count in
+            // Watch requested end match: same flow as the phone button, once per request
+            guard count > handledEndMatchRequest else { return }
+            handledEndMatchRequest = count
+            Task { await endMatchAndSave() }
         }
         .alert("End Game", isPresented: $showingEndGameAlert) {
             Button("Cancel", role: .cancel) {}
-            Button("End Game", role: .destructive) {
-                connectivity.endGame()
+            if connectivity.scoreState.playerOneScore != connectivity.scoreState.playerTwoScore {
+                Button("End Game", role: .destructive) {
+                    connectivity.endGame(force: true)
+                }
             }
         } message: {
-            Text("Record the final score for this game? Recording will continue for the next game.")
+            Text(endGameMessage)
+        }
+        .alert("Match Won", isPresented: matchWonBinding, presenting: connectivity.matchWonBy) { _ in
+            Button("End Match & Save") {
+                Task { await endMatchAndSave() }
+            }
+            Button("Keep Playing", role: .cancel) {
+                connectivity.matchWonBy = nil
+            }
+        } message: { winner in
+            Text(
+                "\(connectivity.name(for: winner)) wins \(connectivity.scoreState.playerOneGames)-\(connectivity.scoreState.playerTwoGames). End the match and save the video?"
+            )
         }
         .alert("End Match", isPresented: $showingEndMatchAlert) {
             Button("Cancel", role: .cancel) {}
@@ -179,30 +194,7 @@ struct GameView: View {
             Text("This will delete all recordings and data for this match. This cannot be undone.")
         }
         .sheet(isPresented: $showExportProgress) {
-            VStack(spacing: 24) {
-                Text("Generating Highlight Video")
-                    .font(.headline)
-
-                ProgressView(value: exportProgress)
-                    .progressViewStyle(.linear)
-                    .tint(.blue)
-
-                Text("\(Int(exportProgress * 100))%")
-                    .font(.title)
-                    .monospacedDigit()
-
-                if exportProgress > 0 {
-                    let estimatedTotal = 180.0  // Rough estimate: 3 minutes for typical match
-                    let elapsed = estimatedTotal * exportProgress
-                    let remaining = estimatedTotal - elapsed
-                    Text("About \(Int(remaining))s remaining")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            }
-            .padding(40)
-            .presentationDetents([.height(280)])
-            .interactiveDismissDisabled()
+            ExportProgressView()
         }
     }
 
@@ -211,18 +203,28 @@ struct GameView: View {
         connectivity.markHighlight()
     }
 
-    private func undoLastAction() {
-        guard let matchId = connectivity.currentMatchId else { return }
-
-        do {
-            if try connectivity.undoService.undoLastPoint(in: matchId) != nil {
-                // Refresh state after undo
-                connectivity.refreshState()
-                updateUndoAvailability()
-            }
-        } catch {
-            Log.ui.error("Error undoing: \(error)")
+    private var endGameMessage: String {
+        let p1 = connectivity.scoreState.playerOneScore
+        let p2 = connectivity.scoreState.playerTwoScore
+        if ScoreAnnouncementUtils.checkGameWon(playerOneScore: p1, playerTwoScore: p2) != nil {
+            return "Record \(p1)-\(p2) for this game? Recording continues for the next game."
         }
+        if p1 == p2 {
+            return "The score is tied \(p1)-\(p2). Score the deciding point before ending the game."
+        }
+        return "The game is not finished (\(p1)-\(p2)). End it now and award it to the leader?"
+    }
+
+    private var matchWonBinding: Binding<Bool> {
+        Binding(
+            get: { connectivity.matchWonBy != nil },
+            set: { if !$0 { connectivity.matchWonBy = nil } }
+        )
+    }
+
+    private func undoLastAction() {
+        connectivity.undoLastAction()
+        updateUndoAvailability()
     }
 
     private func updateUndoAvailability() {
@@ -247,28 +249,10 @@ struct GameView: View {
     }
 
     private func endMatchAndSave() async {
-        isExportingVideo = true
+        guard !connectivity.isExporting else { return }
         showExportProgress = true
-        exportProgress = 0.0
-
-        // Stop recording and wait for the finished video file
-        let videoURL = await connectivity.stopRecording()
-
-        // Export both full video and highlight reel with correct orientation
-        let (fullVideo, highlightReel) = await connectivity.exportMatchVideos(
-            from: videoURL,
-            progressHandler: { progress in
-                exportProgress = progress
-            }
-        )
-
-        // End match with both videos
-        connectivity.endMatch(fullVideoURL: fullVideo, highlightVideoURL: highlightReel)
-
-        isExportingVideo = false
+        await connectivity.finishActiveMatch()
         showExportProgress = false
-
-        // Return to home
         dismiss()
     }
 }
@@ -363,19 +347,21 @@ private struct ScoringPanel: View {
                     name: connectivity.scoreState.playerOneName ?? "Player 1",
                     score: connectivity.scoreState.playerOneScore,
                     isServing: connectivity.scoreState.servingPlayer == 1,
+                    canDecrement: connectivity.lastPointPlayer == 1,
                     tint: .blue,
                     serveIndicatorLeading: false,
                     onIncrement: connectivity.incrementPlayer1,
-                    onDecrement: connectivity.decrementPlayer1
+                    onDecrement: { connectivity.undoPoint(forPlayer: 1) }
                 )
                 PlayerScoreColumn(
                     name: connectivity.scoreState.playerTwoName ?? "Player 2",
                     score: connectivity.scoreState.playerTwoScore,
                     isServing: connectivity.scoreState.servingPlayer == 2,
+                    canDecrement: connectivity.lastPointPlayer == 2,
                     tint: .red,
                     serveIndicatorLeading: true,
                     onIncrement: connectivity.incrementPlayer2,
-                    onDecrement: connectivity.decrementPlayer2
+                    onDecrement: { connectivity.undoPoint(forPlayer: 2) }
                 )
             }
 
@@ -417,6 +403,7 @@ private struct PlayerScoreColumn: View {
     let name: String
     let score: Int
     let isServing: Bool
+    let canDecrement: Bool
     let tint: Color
     let serveIndicatorLeading: Bool
     let onIncrement: () -> Void
@@ -451,6 +438,7 @@ private struct PlayerScoreColumn: View {
                 }
                 .buttonStyle(.bordered)
                 .tint(tint)
+                .disabled(!canDecrement)
             }
         }
     }
