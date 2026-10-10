@@ -208,9 +208,14 @@ final class MatchSummaryService {
             summaries[matchId] = analysis
             errors[matchId] = nil
             save(analysis, matchId: matchId, store: store)
-        case .failure(.modelUnavailable):
-            break  // shown through `availability`, not as an error card
         case .failure(let error):
+            // A model reported unavailable is shown by the unavailable card, not an error card. One
+            // that threw (e.g. assets removed mid-generation) while availability still says
+            // `.available` gets an error card, or the button would fail silently.
+            if case .modelUnavailable = error {
+                refreshAvailability()
+                guard isAvailable else { return result }
+            }
             errors[matchId] = error
         }
         return result

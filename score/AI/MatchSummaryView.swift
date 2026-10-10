@@ -208,10 +208,34 @@ struct MatchSummaryUnavailableView: View {
 
 // MARK: - Container View with State Management
 
-/// Shows the summary for one match: the saved (or just generated) summary first, whatever the
-/// model's current availability; otherwise progress, the unavailable card, an error or the button.
-/// Generation and persistence go through `MatchSummaryService`, which shares one in-flight
-/// generation per match with the background auto-summary.
+/// What `MatchSummaryContainer` shows for one match, in priority order: a summary whenever there is
+/// one (generated this session or saved), whatever the model's current availability; otherwise
+/// progress, the unavailable card, the last error, or the generate button.
+enum MatchSummaryDisplay {
+    case summary(MatchAnalysis)
+    case generating
+    case unavailable(reason: String)
+    case failed(MatchSummaryService.AIError)
+    case ready
+
+    init(matchId: UUID, cachedSummary: MatchAnalysis?, service: MatchSummaryService) {
+        if let analysis = service.latestSummary(for: matchId) ?? cachedSummary {
+            self = .summary(analysis)
+        } else if service.isGenerating(matchId: matchId) {
+            self = .generating
+        } else if !service.isAvailable {
+            self = .unavailable(reason: service.availabilityDescription)
+        } else if let error = service.error(for: matchId) {
+            self = .failed(error)
+        } else {
+            self = .ready
+        }
+    }
+}
+
+/// Shows the `MatchSummaryDisplay` for one match. Generation and persistence go through
+/// `MatchSummaryService`, which shares one in-flight generation per match with the background
+/// auto-summary.
 struct MatchSummaryContainer: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
@@ -255,20 +279,21 @@ struct MatchSummaryContainer: View {
 
     @ViewBuilder
     private var content: some View {
-        if let analysis = summaryService.latestSummary(for: matchId) ?? cachedSummary {
+        switch MatchSummaryDisplay(matchId: matchId, cachedSummary: cachedSummary, service: summaryService) {
+        case .summary(let analysis):
             let names = MatchPlayers.names(of: matchResult)
             MatchSummaryCardView(
                 analysis: analysis,
                 playerOneName: names?.playerOne ?? "Player 1",
                 playerTwoName: names?.playerTwo ?? "Player 2"
             )
-        } else if isGenerating {
+        case .generating:
             MatchSummaryLoadingView()
-        } else if !summaryService.isAvailable {
-            MatchSummaryUnavailableView(reason: summaryService.availabilityDescription)
-        } else if let error = summaryService.error(for: matchId) {
+        case .unavailable(let reason):
+            MatchSummaryUnavailableView(reason: reason)
+        case .failed(let error):
             MatchSummaryErrorView(error: error.localizedDescription, onRetry: generate)
-        } else {
+        case .ready:
             Button(action: generate) {
                 HStack {
                     Image(systemName: "sparkles")
