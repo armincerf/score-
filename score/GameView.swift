@@ -22,6 +22,7 @@ struct GameView: View {
     @State private var captureSession: AVCaptureSession?
     @State private var showExportProgress = false
     @State private var handledEndMatchRequest = 0
+    @State private var showingSaveFailedAlert = false
     @State private var cameraEnabled = true
 
     private var isRunningOnSimulator: Bool {
@@ -196,6 +197,11 @@ struct GameView: View {
         .sheet(isPresented: $showExportProgress) {
             ExportProgressView()
         }
+        .alert("Could not save the match", isPresented: $showingSaveFailedAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("The match is still active. Check free space and try again, or cancel the match.")
+        }
     }
 
     private func markHighlight() {
@@ -250,10 +256,19 @@ struct GameView: View {
 
     private func endMatchAndSave() async {
         guard !connectivity.isExporting else { return }
+        // An alert cannot host a sheet; dismiss any that is up (watch requests arrive at any time)
+        showingEndGameAlert = false
+        showingEndMatchAlert = false
+        showingCancelAlert = false
+        connectivity.matchWonBy = nil
         showExportProgress = true
-        await connectivity.finishActiveMatch()
+        let saved = await connectivity.finishActiveMatch()
         showExportProgress = false
-        dismiss()
+        if saved {
+            dismiss()
+        } else {
+            showingSaveFailedAlert = true
+        }
     }
 }
 
@@ -496,6 +511,12 @@ class CameraPreviewViewController: UIViewController {
         super.viewDidLoad()
         view.backgroundColor = .black
         setupPreviewLayer()
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // RotationCoordinator reports 0° until the layer is in a window: rebuild it now
+        updatePreviewSession()
     }
 
     override func viewDidLayoutSubviews() {

@@ -136,10 +136,11 @@ nonisolated enum ScoreAnnouncementUtils {
     ) -> Int? {
         let gamesToWin = (bestOf / 2) + 1
 
-        if playerOneGames >= gamesToWin {
+        // Playing on after a decided match ("Keep Playing") can bring both past the line
+        if playerOneGames >= gamesToWin && playerOneGames > playerTwoGames {
             return 1
         }
-        if playerTwoGames >= gamesToWin {
+        if playerTwoGames >= gamesToWin && playerTwoGames > playerOneGames {
             return 2
         }
         return nil

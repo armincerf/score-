@@ -19,9 +19,9 @@ RESULT       := $(BUILD_DIR)/results/test.xcresult
 XCB          := scripts/xcb.sh
 # Optional: `make test T=scoreTests/ServingLogicTests` runs one suite/test.
 T ?=
-ONLY := $(if $(T),-only-testing:$(T),)
+ONLY := $(if $(T),-only-testing:'$(T)',)
 
-.PHONY: help setup build build-watch test test-summary lint format check skills clean sim-list deploy install
+.PHONY: help setup build build-watch test test-summary lint format check skills clean sim-list sim-reset deploy install
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -43,11 +43,11 @@ build-watch: ## Build the watch app on its own
 	set -o pipefail; xcodebuild build -project $(PROJECT) -scheme "$(WATCH_SCHEME)" -destination '$(DEST_WATCH)' \
 	  CODE_SIGNING_ALLOWED=NO SWIFT_TREAT_WARNINGS_AS_ERRORS=YES 2>&1 | tee $(LOG_DIR)/build-watch.log | $(XCB)
 
-test: ## Run unit tests on the simulator (T=Suite/testName to filter)
+test: ## Run unit tests on the simulator (T=scoreTests/Suite or T=scoreTests/Suite/testName to filter)
 	@mkdir -p $(LOG_DIR) $(dir $(RESULT)); rm -rf $(RESULT)
 	udid=$$(scripts/simulator-udid.sh "$(SIM_NAME)"); \
 	xcodebuild test -project $(PROJECT) -scheme "$(SCHEME)" -destination "platform=iOS Simulator,id=$$udid" \
-	  -resultBundlePath $(RESULT) CODE_SIGNING_ALLOWED=NO $(ONLY) 2>&1 | tee $(LOG_DIR)/test.log | $(XCB)
+	  -resultBundlePath $(RESULT) CODE_SIGNING_ALLOWED=NO SWIFT_TREAT_WARNINGS_AS_ERRORS=YES $(ONLY) 2>&1 | tee $(LOG_DIR)/test.log | $(XCB)
 	@scripts/test-summary.sh $(RESULT) || true
 
 test-summary: ## Print pass/fail summary from the last test run
@@ -74,6 +74,10 @@ deploy: ## Build Release for a connected iPhone and install + launch it (devicec
 
 install: ## Install the last device build without rebuilding
 	@scripts/deploy-device.sh --no-build
+
+sim-reset: ## Erase the test simulator (fixes "Failed to install or launch the test runner")
+	@udid=$$(scripts/simulator-udid.sh "$(SIM_NAME)"); xcrun simctl shutdown "$$udid" >/dev/null 2>&1 || true; \
+	xcrun simctl erase "$$udid" && echo "erased $(SIM_NAME) ($$udid)"
 
 sim-list: ## List available iOS simulators
 	@xcrun simctl list devices available | grep -E "iPhone|iPad|Watch"

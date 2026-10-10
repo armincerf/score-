@@ -15,6 +15,7 @@ import os
 class ScoreAnnouncer: NSObject {
     private let synthesizer = AVSpeechSynthesizer()
     var isEnabled = true
+    private var idleActions: [@MainActor () -> Void] = []
 
     override init() {
         super.init()
@@ -44,6 +45,24 @@ class ScoreAnnouncer: NSObject {
         )
 
         speak(announcement.text)
+    }
+
+    /// Runs `action` now if nothing is being spoken, otherwise after the current speech finishes
+    /// (so releasing the audio session does not cut an announcement off).
+    func performWhenIdle(_ action: @escaping @MainActor () -> Void) {
+        if synthesizer.isSpeaking {
+            idleActions.append(action)
+        } else {
+            action()
+        }
+    }
+
+    private func runIdleActions() {
+        let actions = idleActions
+        idleActions = []
+        for action in actions {
+            action()
+        }
     }
 
     /// Speaks arbitrary text (used for "Game to Ann", "Match to Bob").
@@ -97,9 +116,15 @@ class ScoreAnnouncer: NSObject {
 extension ScoreAnnouncer: AVSpeechSynthesizerDelegate {
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         Log.audio.debug("Finished speaking")
+        Task { @MainActor in
+            self.runIdleActions()
+        }
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
         Log.audio.debug("Cancelled speaking")
+        Task { @MainActor in
+            self.runIdleActions()
+        }
     }
 }

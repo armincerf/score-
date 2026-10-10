@@ -34,6 +34,9 @@ struct ContentView: View {
                 WaitingView()
             }
         }
+        .onChange(of: session.scoreState.isRecording) { _, recording in
+            if recording { selection = 1 }  // a new match always opens on the scoring page
+        }
         // A command failed, or the phone did not confirm it within the timeout.
         .sensoryFeedback(.error, trigger: session.failedCommandCount)
     }

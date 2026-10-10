@@ -143,7 +143,8 @@ scripts/                    xcb.sh (xcodebuild filter), deploy-device.sh (device
    automatically. For targets/settings see "Project file changes".
 9. Don't change deployment targets, bundle ids, signing or entitlements unless asked.
 10. Logic changes come with Swift Testing tests in `scoreTests/` (not XCTest). Keep the
-    phone and watch copies of `ScoreState.swift`/`ServingLogic` in sync when touching either.
+    phone and watch copies of `ScoreState.swift` in sync when touching either (the watch has
+    no ServingLogic; it only mirrors state).
 11. Run `make check` before declaring work done; CI runs the same gates.
 
 ## Testing
@@ -156,7 +157,7 @@ scripts/                    xcb.sh (xcodebuild filter), deploy-device.sh (device
 - A known-bug test is written for the correct behaviour and marked
   `.disabled("BUG: ...")` so it documents the defect without failing CI.
 - Run one suite/test: `make test T=scoreTests/EventSourcingTests` or
-  `T=scoreTests/EventSourcingTests/undoDropsLastPoint`.
+  `T=scoreTests/EventSourcingTests/undoDropsLastPoint` (no parentheses).
 
 ## Project file changes
 
@@ -182,6 +183,12 @@ and a `make build`. Shared schemes live in `score.xcodeproj/xcshareddata/xcschem
 - `AVCaptureSession.startRunning()` blocks; it runs on a detached task and the first file
   starts ~0.5 s later. That is fine: the segment's `startOffset` records when footage really
   began, and `RecordingTimeline` maps event offsets onto it.
+- iOS mutes system sounds and haptics while the microphone is recording, so the phone's
+  highlight "tink"/haptic are inaudible during a recorded match; the watch's haptic is the
+  real confirmation.
+- A game-winning point can be undone: `UndoService` treats a `gameEnded` that directly follows
+  a point as part of that point and reopens the game (`undoLastAction`/`undoLastPoint`); the
+  '-' button does the same via `lastPointPlayer`.
 - GameView disables the idle timer while on screen (the phone sits on a stand); without it
   the device locks after 30-60 s and the capture session is interrupted. The status bar
   shows REC only while `videoManager.state == .recording`.
@@ -190,6 +197,9 @@ and a `make build`. Shared schemes live in `score.xcodeproj/xcshareddata/xcschem
 - Orientation comes from `AVCaptureDevice.RotationCoordinator` (capture and preview), never
   `UIDevice.current.orientation`, which is `.faceUp`/`.unknown` for a phone lying flat. Export
   rotates each segment by its own `preferredTransform`.
+- If `make test` reports "Failed to install or launch the test runner ... No such process" for
+  every test, the simulator is in a bad state (typically after a killed xcodebuild): run
+  `make sim-reset`, or add `-parallel-testing-enabled NO` to the xcodebuild test command.
 - GitHub's `xcode-27` runner image is a preview; if it disappears, switch CI to
   `macos-26` + `xcode-select`.
 
@@ -204,6 +214,15 @@ and a `make build`. Shared schemes live in `score.xcodeproj/xcshareddata/xcschem
 - `loadMatchHistory()` re-projects every finished match's events on the main actor at launch;
   cache the projected games on `StoredMatch` once history grows into the hundreds.
 - Recording segments are concatenated at export; there is no UI to review or trim them.
+- Watch protocol: a late live reply or applicationContext is applied unconditionally (the next
+  `sendScore()` corrects it); the 2 s pending timeout plays an error haptic while a slow live
+  send may still land; a tied-score End Game is dropped silently by the phone after the watch
+  haptic; `RecentActionIDs` is in-memory only. Fix together with a watch test target.
+- Export renders every segment at the first segment's size (a mid-match orientation change
+  letterboxes); `VideoRecordingManager` start/stop still use detached tasks.
+- Legacy rows: matches tied on games that pre-date `MatchResult.noWinner` reload as player-2
+  wins; an in-progress legacy match loses its tmp recording on upgrade.
+- Several test comments in WatchCommandTests still describe the bugs they were written for.
 
 ## Skills
 

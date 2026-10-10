@@ -168,6 +168,11 @@ extension WatchConnectivityManager: WCSessionDelegate {
     }
 
     func handleMessageData(_ messageData: WatchMessageData) {
+        // While the match is being stopped, exported and saved, late taps must not change it
+        if isExporting, let command = messageData.command, command != "requestSync" {
+            Log.match.warning("Ignoring watch command \(command) during export")
+            return
+        }
         // Any message from watch means the watch app is installed and connected
         self.isWatchAppInstalled = true
 
@@ -188,8 +193,14 @@ extension WatchConnectivityManager: WCSessionDelegate {
                 Log.match.debug("Command: highlight from watch")
 
             case "endGame":
-                // The watch has no score validation; the phone only ends finished or led games
-                self.endGame(force: true)
+                // The watch has no score validation; the phone only ends finished or led games.
+                // A queued End Game from minutes ago would end whatever game is current: drop it.
+                if let sentAt = messageData.sentAt, Date().timeIntervalSince1970 - sentAt > 30 {
+                    Log.match.warning(
+                        "Ignoring stale endGame command (\(Int(Date().timeIntervalSince1970 - sentAt))s old)")
+                } else {
+                    self.endGame(force: true)
+                }
 
             case "endMatch":
                 self.requestEndMatchFromWatch()

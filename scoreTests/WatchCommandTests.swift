@@ -30,6 +30,7 @@ struct WatchCommandTests {
             eventStore: eventStore, stateProjector: projector,
             undoService: UndoService(eventStore: eventStore, stateProjector: projector), modelContext: context)
         manager.scoreAnnouncer.isEnabled = false  // no TTS in tests
+        manager.generatesSummaries = false  // no FoundationModels task outliving the test
     }
 
     // MARK: - Helpers
@@ -392,7 +393,9 @@ struct WatchCommandTests {
     @Test("A command queued with transferUserInfo scores when it arrives, however late")
     func userInfoCommandScores() throws {
         let matchId = try startMatch()
-        let sentAt = Date(timeIntervalSinceNow: -90)  // tapped while the phone was out of range
+        // Tapped during this match while the phone was out of range (a tap from before the match
+        // started is stale and dropped, see commandFromEarlierMatchIsDropped); delivery itself is late.
+        let sentAt = Date()
         let actionId = UUID().uuidString
         let userInfo = Self.watchCommand("incrementP2", actionId: actionId, sentAt: sentAt)
         let parsed = WatchMessageData(from: userInfo)

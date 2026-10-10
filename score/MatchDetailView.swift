@@ -175,7 +175,7 @@ struct MatchDetailView: View {
 
                         StatRow(label: "Total Points", value: "\(match.totalPoints)")
 
-                        let totalHighlights = match.games.reduce(0) { $0 + $1.points.filter(\.isHighlight).count }
+                        let totalHighlights = match.highlightCount
                         if totalHighlights > 0 {
                             StatRow(label: "Highlights", value: "\(totalHighlights)")
                         }
@@ -281,7 +281,7 @@ struct MatchDetailView: View {
                     }
                 } else {
                     // No videos message
-                    let totalHighlights = match.games.reduce(0) { $0 + $1.points.filter(\.isHighlight).count }
+                    let totalHighlights = match.highlightCount
                     if totalHighlights == 0 {
                         VStack(spacing: 12) {
                             Image(systemName: "star.slash")
@@ -326,12 +326,16 @@ struct MatchDetailView: View {
                         .font(.headline)
 
                     ForEach(Array(match.games.enumerated()), id: \.offset) { index, game in
-                        GameDetailRow(game: game, gameNumber: index + 1)
+                        GameDetailRow(
+                            game: game,
+                            gameNumber: index + 1,
+                            highlightCount: match.highlightClips.filter { $0.gameNumber == index }.count
+                        )
                     }
                 }
 
                 // Highlights list
-                let allHighlights = match.games.flatMap { $0.points.filter(\.isHighlight) }
+                let allHighlights = match.highlightClips
                 if !allHighlights.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack {
@@ -341,9 +345,9 @@ struct MatchDetailView: View {
                                 .font(.headline)
                         }
 
-                        ForEach(Array(allHighlights.enumerated()), id: \.offset) { index, point in
+                        ForEach(Array(allHighlights.enumerated()), id: \.element.id) { index, clip in
                             HighlightRow(
-                                point: point,
+                                clip: clip,
                                 number: index + 1,
                                 playerOneName: playerOneName,
                                 playerTwoName: playerTwoName
@@ -417,6 +421,7 @@ struct StatRow: View {
 struct GameDetailRow: View {
     let game: GameResult
     let gameNumber: Int
+    var highlightCount = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -447,7 +452,7 @@ struct GameDetailRow: View {
                         .cornerRadius(4)
                 }
 
-                let highlights = game.points.filter(\.isHighlight).count
+                let highlights = highlightCount
                 if highlights > 0 {
                     HStack(spacing: 4) {
                         Image(systemName: "star.fill")
@@ -502,19 +507,25 @@ struct GameDetailRow: View {
 }
 
 struct HighlightRow: View {
-    let point: PointEvent
+    let clip: HighlightClip
     let number: Int
     let playerOneName: String
     let playerTwoName: String
 
-    private var timeFormatter: DateFormatter {
-        let formatter = DateFormatter()
-        formatter.timeStyle = .medium
-        return formatter
+    private var playerName: String {
+        switch clip.player {
+        case 1: return playerOneName
+        case 2: return playerTwoName
+        default: return "Unattributed"
+        }
     }
 
-    private var playerName: String {
-        point.player == 1 ? playerOneName : playerTwoName
+    private var playerColor: Color {
+        switch clip.player {
+        case 1: return .blue
+        case 2: return .red
+        default: return .secondary
+        }
     }
 
     var body: some View {
@@ -526,21 +537,19 @@ struct HighlightRow: View {
 
                 Text(playerName)
                     .font(.subheadline)
-                    .foregroundColor(point.player == 1 ? .blue : .red)
+                    .foregroundColor(playerColor)
+
+                Text("Game \(clip.gameNumber + 1)")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
             }
 
             Spacer()
 
-            if let videoTimestamp = point.videoTimestamp {
-                Text(formatTimestamp(videoTimestamp))
-                    .font(.caption)
-                    .monospacedDigit()
-                    .foregroundColor(.secondary)
-            } else {
-                Text(timeFormatter.string(from: point.timestamp))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
+            Text("\(formatTimestamp(clip.startTimestamp)) – \(formatTimestamp(clip.endTimestamp))")
+                .font(.caption)
+                .monospacedDigit()
+                .foregroundColor(.secondary)
         }
         .padding(.vertical, 8)
         .padding(.horizontal, 12)

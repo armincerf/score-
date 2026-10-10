@@ -18,6 +18,7 @@ struct HomeView: View {
     @State private var player1Name = ""
     @State private var player2Name = ""
     @State private var isFinishingMatch = false
+    @State private var showingSaveFailedAlert = false
 
     private var preferencesService: UserPreferencesService {
         UserPreferencesService(modelContext: modelContext)
@@ -184,7 +185,12 @@ struct HomeView: View {
             .sheet(isPresented: $isFinishingMatch) {
                 ExportProgressView()
             }
-            .onChange(of: connectivity.endMatchRequestCount) { _, count in
+            .alert("Could not save the match", isPresented: $showingSaveFailedAlert) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("The match is still active. Open it to try again, or delete it.")
+            }
+            .onChange(of: connectivity.endMatchRequestCount, initial: true) { _, count in
                 // Watch asked to end the match while the game screen was not showing: show it so it can
                 if count > 0, connectivity.isRecording, !showingGame {
                     showingGame = true
@@ -228,8 +234,12 @@ struct HomeView: View {
     private func saveAndStartNew() async {
         // Stop recording, export and save the current match before offering a new one
         isFinishingMatch = true
-        await connectivity.finishActiveMatch()
+        let saved = await connectivity.finishActiveMatch()
         isFinishingMatch = false
+        guard saved else {
+            showingSaveFailedAlert = true
+            return
+        }
 
         // Now start new match
         prepareMatchName()

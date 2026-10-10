@@ -46,8 +46,10 @@ final class VideoRecordingManager: NSObject {
 
     /// A movie file has actually begun capturing (URL, wall-clock time).
     var onSegmentStarted: ((URL, Date) -> Void)?
-    /// A file finished for a reason other than stopRecording() (interruption or system stop).
-    var onSegmentInterrupted: ((URL) -> Void)?
+    /// A file finished for a reason other than stopRecording(). `sessionInterrupted` is true when the
+    /// capture session itself is interrupted (capture resumes via onInterruptionEnded); false when only
+    /// the file ended (max duration, disk full...) and a new segment can be started straight away.
+    var onSegmentInterrupted: ((URL, _ sessionInterrupted: Bool) -> Void)?
     /// A capture interruption ended and the session is running again: start a new segment here.
     var onInterruptionEnded: (() -> Void)?
 
@@ -101,8 +103,6 @@ final class VideoRecordingManager: NSObject {
         let session = AVCaptureSession()
         // AudioSessionCoordinator owns the app audio session so announcements keep using the speaker
         session.automaticallyConfiguresApplicationAudioSession = false
-        applyPreset(to: session)
-
         guard let device = preferredCameraDevice() else {
             fail("Failed to access camera device")
             return
@@ -113,6 +113,7 @@ final class VideoRecordingManager: NSObject {
         }
         session.addInput(videoInput)
         addAudioInput(to: session)
+        applyPreset(to: session)  // after the inputs: canSetSessionPreset depends on them
 
         let movieOutput = AVCaptureMovieFileOutput()
         guard session.canAddOutput(movieOutput) else {
@@ -138,6 +139,11 @@ final class VideoRecordingManager: NSObject {
             }
             completion()
         }
+    }
+
+    /// Marks capture as failed (used by the owner when restarts keep failing).
+    func markFailed(_ message: String) {
+        fail(message)
     }
 
     private func fail(_ message: String) {
@@ -280,8 +286,9 @@ final class VideoRecordingManager: NSObject {
             return
         }
         // The system ended the file (interruption, disk full, max duration...)
-        if case .interrupted = state {} else { state = .interrupted("recording was stopped by the system") }
-        onSegmentInterrupted?(fileURL)
+        var sessionInterrupted = false
+        if case .interrupted = state { sessionInterrupted = true } else { state = .ready }
+        onSegmentInterrupted?(fileURL, sessionInterrupted)
     }
 
     func stopCaptureSession() {

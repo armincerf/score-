@@ -78,10 +78,6 @@ opt_in_rules:
   - untyped_error_in_catch
   - yoda_condition
 
-analyzer_rules:
-  - unused_declaration
-  - unused_import
-
 line_length:
   warning: 140
   error: 200
@@ -131,7 +127,9 @@ force_unwrapping: error
 custom_rules:
   no_print:
     name: "No print()"
-    regex: '^\s*print\('
+    regex: '(^|[^\w.])print\('
+    match_kinds:
+      - identifier
     message: "Use `Logger` (see score/Log.swift) instead of print so logs are filterable and stripped of private data."
     severity: warning
   no_dispatch_main:

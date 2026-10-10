@@ -154,7 +154,7 @@ struct ScoreStateTests {
         #expect(fresh.currentMatchGames.isEmpty && fresh.currentGamePoints.isEmpty && fresh.highlightClips.isEmpty)
         #expect(fresh.currentMatchName == "Cat vs Dog" && fresh.playerOneName == "Cat" && fresh.playerTwoName == "Dog")
         #expect(fresh.servingPlayer == 2 && fresh.currentGameFirstServer == 2 && fresh.pendingHighlight == nil)
-        #expect(fresh.isRecording && fresh.recordingStartTime == Self.startTime)
+        #expect(!fresh.isRecording && fresh.recordingStartTime == Self.startTime)  // startRecording() marks it live
 
         let idle = ScoreState.forNewMatch(
             preservingHistoryFrom: previous, matchName: "", playerOneName: "", playerTwoName: "", initialServer: 1)

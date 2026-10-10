@@ -117,6 +117,7 @@ nonisolated struct MatchResult: Codable, Sendable, Identifiable {
     let playerTwoGames: Int
     let winner: Int  // 1, 2 or MatchResult.noWinner
     let games: [GameResult]
+    let highlightClips: [HighlightClip]  // Marked highlights (attributed or not), for history screens
     let timestamp: Date
     let fullVideoURL: String?  // Stored video reference; resolve with VideoStore before use
     let highlightVideoURL: String?  // Stored highlight reel reference
@@ -131,6 +132,7 @@ nonisolated struct MatchResult: Codable, Sendable, Identifiable {
         playerTwoGames: Int,
         winner: Int,
         games: [GameResult],
+        highlightClips: [HighlightClip] = [],
         timestamp: Date = Date(),
         fullVideoURL: String? = nil,
         highlightVideoURL: String? = nil,
@@ -144,6 +146,7 @@ nonisolated struct MatchResult: Codable, Sendable, Identifiable {
         self.playerTwoGames = playerTwoGames
         self.winner = winner
         self.games = games
+        self.highlightClips = highlightClips
         self.timestamp = timestamp
         self.fullVideoURL = fullVideoURL
         self.highlightVideoURL = highlightVideoURL
@@ -161,6 +164,7 @@ nonisolated struct MatchResult: Codable, Sendable, Identifiable {
         playerTwoGames = try container.decode(Int.self, forKey: .playerTwoGames)
         winner = try container.decode(Int.self, forKey: .winner)
         games = try container.decode([GameResult].self, forKey: .games)
+        highlightClips = try container.decodeIfPresent([HighlightClip].self, forKey: .highlightClips) ?? []
         timestamp = try container.decode(Date.self, forKey: .timestamp)
         fullVideoURL = try container.decodeIfPresent(String.self, forKey: .fullVideoURL)
         highlightVideoURL = try container.decodeIfPresent(String.self, forKey: .highlightVideoURL)
@@ -169,6 +173,10 @@ nonisolated struct MatchResult: Codable, Sendable, Identifiable {
 
     var hasWinner: Bool {
         winner == 1 || winner == 2
+    }
+
+    var highlightCount: Int {
+        highlightClips.count
     }
 
     /// Name of the winner, or nil for a match without one.
@@ -468,7 +476,7 @@ nonisolated struct ScoreState: Codable, Sendable {
             currentGamePoints: [],
             highlightClips: [],
             pendingHighlight: nil,
-            isRecording: recordingStartTime != nil,
+            isRecording: false,  // startRecording() marks the match live
             recordingStartTime: recordingStartTime,
             currentMatchName: matchName,
             playerOneName: playerOneName,

@@ -232,21 +232,35 @@ struct EventSourcingTests {
         }
     }
 
-    @Test("Undo cannot reach into a finished game")
-    func undoStopsAtGameBoundary() throws {
+    @Test("Undoing right after a game ended reopens the game and removes its last point")
+    func undoReopensEndedGame() throws {
         let sut = try Harness.started()
         try sut.points([1, 1])
         try sut.endGame(p1: 2, p2: 0)
         #expect(try sut.store.getCurrentGameEvents(matchId: sut.matchId).isEmpty)
-        #expect(try sut.undo.undoLastPoint(in: sut.matchId) == nil)
-        #expect(try !sut.undo.canUndo(in: sut.matchId) && sut.undo.getUndoableActionCount(in: sut.matchId) == 0)
-        #expect(try sut.undo.getUndoDescription(in: sut.matchId) == nil)
+        #expect(try sut.undo.canUndo(in: sut.matchId) && sut.undo.getUndoableActionCount(in: sut.matchId) == 1)
+        #expect(try sut.undo.getUndoDescription(in: sut.matchId) == "Point for Player 1 (reopens the game)")
+        #expect(try sut.undo.undoLastAction(in: sut.matchId) != nil)
+        let reopened = try sut.project()
+        #expect(reopened.currentMatchGames.isEmpty && reopened.playerOneGames == 0)
+        #expect(reopened.playerOneScore == 1 && reopened.currentGamePoints.count == 1)
+    }
+
+    @Test("A point in the next game is undone before the previous game is reopened")
+    func undoStaysInCurrentGameFirst() throws {
+        let sut = try Harness.started()
+        try sut.points([1, 1])
+        try sut.endGame(p1: 2, p2: 0)
         try sut.point(2, game: 1)
         #expect(try sut.store.getCurrentGameEvents(matchId: sut.matchId).count == 1)
+        #expect(try sut.undo.getUndoDescription(in: sut.matchId) == "Point for Player 2")
         #expect(try sut.undo.undoLastPoint(in: sut.matchId) != nil)
-        let state = try sut.project()
+        var state = try sut.project()
         #expect(state.currentMatchGames.first?.points.count == 2 && state.playerOneGames == 1)
         #expect(state.playerTwoScore == 0 && state.currentGamePoints.isEmpty)
+        #expect(try sut.undo.undoLastPoint(in: sut.matchId) != nil)  // now reopens game 1
+        state = try sut.project()
+        #expect(state.playerOneGames == 0 && state.playerOneScore == 1)
     }
 
     @Test("canUndo, undoable count and description follow the last live action")

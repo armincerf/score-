@@ -378,7 +378,7 @@ extension WatchSessionManager: WCSessionDelegate {
         let messageData = context.isEmpty ? nil : MessageData(from: context)
 
         Task { @MainActor in
-            self.isConnected = isActivated
+            self.isConnected = isActivated && isReachable
             // Transfers queued by an earlier run of the app are still pending after a relaunch.
             self.refreshQueuedCommandCount()
             if let messageData {

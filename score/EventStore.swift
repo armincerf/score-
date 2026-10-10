@@ -35,7 +35,12 @@ class EventStore {
         if let match = try getMatch(id: event.matchId) {
             storedEvent.match = match
         }
-        try modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            modelContext.rollback()  // don't let autosave commit the failed insert later
+            throw error
+        }
 
         Log.store.debug(
             "Appended \(event.eventType.rawValue) event #\(event.sequenceNumber) for match \(event.matchId)")

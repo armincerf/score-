@@ -136,12 +136,15 @@ class StateProjector {
 
     private func apply(_ event: HighlightAttributedEvent, to replay: inout Replay) {
         guard let pendingEvent = replay.pendingHighlights[event.highlightEventId] else { return }
+        // A second mark before the point extended the pending clip; keep that end, not the first mark's
+        let pendingClip = replay.state.pendingHighlight?.id == pendingEvent.id ? replay.state.pendingHighlight : nil
+        let endTimestamp = max(pendingClip?.endTimestamp ?? 0, pendingEvent.videoTimestamp)
         let lastPointTimestamp = replay.pointTimestamps.last(where: { $0 < pendingEvent.videoTimestamp }) ?? 0
         replay.highlightClips.append(
             HighlightClip(
                 id: pendingEvent.id,
                 startTimestamp: lastPointTimestamp,
-                endTimestamp: pendingEvent.videoTimestamp,
+                endTimestamp: endTimestamp,
                 player: event.player,
                 gameNumber: pendingEvent.gameNumber
             )

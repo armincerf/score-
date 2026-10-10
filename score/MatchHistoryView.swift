@@ -147,7 +147,7 @@ struct MatchRowView: View {
                 Spacer()
 
                 // Highlights indicator
-                let totalHighlights = match.games.reduce(0) { $0 + $1.points.filter(\.isHighlight).count }
+                let totalHighlights = match.highlightCount
                 if totalHighlights > 0 {
                     HStack(spacing: 4) {
                         Image(systemName: "star.fill")

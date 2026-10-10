@@ -12,7 +12,8 @@ concurrency:
 jobs:
   lint:
     name: Lint & format
-    runs-on: macos-26
+    # Same image as the build so swift-format (bundled with Xcode 27) matches local runs.
+    runs-on: xcode-27
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
