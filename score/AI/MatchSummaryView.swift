@@ -208,84 +208,94 @@ struct MatchSummaryUnavailableView: View {
 
 // MARK: - Container View with State Management
 
+/// Shows the summary for one match: the saved (or just generated) summary first, whatever the
+/// model's current availability; otherwise progress, the unavailable card, an error or the button.
+/// Generation and persistence go through `MatchSummaryService`, which shares one in-flight
+/// generation per match with the background auto-summary.
 struct MatchSummaryContainer: View {
-    @State private var summaryService = MatchSummaryService()
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.scenePhase) private var scenePhase
     @State private var cachedSummary: MatchAnalysis?
 
     let matchResult: MatchResult
     let allMatches: [MatchResult]
+    private let summaryService: MatchSummaryService
+
+    init(matchResult: MatchResult, allMatches: [MatchResult], summaryService: MatchSummaryService = .shared) {
+        self.matchResult = matchResult
+        self.allMatches = allMatches
+        self.summaryService = summaryService
+    }
+
+    private var matchId: UUID { matchResult.id }
+
+    private var isGenerating: Bool {
+        summaryService.isGenerating(matchId: matchId)
+    }
 
     var body: some View {
-        Group {
-            if !summaryService.isAvailable {
-                MatchSummaryUnavailableView(reason: summaryService.availabilityDescription)
-            } else if summaryService.isGenerating {
-                MatchSummaryLoadingView()
-            } else if let error = summaryService.lastError {
-                MatchSummaryErrorView(error: error.localizedDescription) {
-                    Task {
-                        await summaryService.generateSummary(for: matchResult, allMatches: allMatches)
-                    }
-                }
-            } else if let analysis = summaryService.lastSummary ?? cachedSummary {
-                MatchSummaryCardView(
-                    analysis: analysis,
-                    playerOneName: extractPlayerName(1),
-                    playerTwoName: extractPlayerName(2)
-                )
-            } else {
-                Button {
-                    Task {
-                        await summaryService.generateSummary(for: matchResult, allMatches: allMatches)
-                    }
-                } label: {
-                    HStack {
-                        Image(systemName: "sparkles")
-                        Text("Generate AI Summary")
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(.regularMaterial)
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
-                }
-                .buttonStyle(.plain)
+        content
+            .animation(.easeInOut, value: isGenerating)
+            .task(id: matchId) {
+                summaryService.refreshAvailability()
+                loadCachedSummary()
             }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active {
+                    summaryService.refreshAvailability()
+                }
+            }
+            .onChange(of: isGenerating) { _, generating in
+                // A generation for this match (ours or the background one) finished and saved.
+                if !generating {
+                    loadCachedSummary()
+                }
+            }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if let analysis = summaryService.latestSummary(for: matchId) ?? cachedSummary {
+            let names = MatchPlayers.names(of: matchResult)
+            MatchSummaryCardView(
+                analysis: analysis,
+                playerOneName: names?.playerOne ?? "Player 1",
+                playerTwoName: names?.playerTwo ?? "Player 2"
+            )
+        } else if isGenerating {
+            MatchSummaryLoadingView()
+        } else if !summaryService.isAvailable {
+            MatchSummaryUnavailableView(reason: summaryService.availabilityDescription)
+        } else if let error = summaryService.error(for: matchId) {
+            MatchSummaryErrorView(error: error.localizedDescription, onRetry: generate)
+        } else {
+            Button(action: generate) {
+                HStack {
+                    Image(systemName: "sparkles")
+                    Text("Generate AI Summary")
+                }
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(.regularMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+            }
+            .buttonStyle(.plain)
         }
-        .animation(.easeInOut, value: summaryService.isGenerating)
-        .task {
-            // Load cached summary from database
+    }
+
+    private func generate() {
+        let store = EventStore(modelContext: modelContext)
+        Task {
+            await summaryService.generateAndStoreSummary(for: matchResult, history: allMatches, store: store)
             loadCachedSummary()
         }
     }
 
+    /// Re-reads StoredMatch.aiSummaryData for this match (by id).
     private func loadCachedSummary() {
-        guard let matchName = matchResult.name else { return }
-
-        do {
-            let descriptor = FetchDescriptor<StoredMatch>(
-                predicate: #Predicate<StoredMatch> { $0.matchName == matchName }
-            )
-
-            let matches = try modelContext.fetch(descriptor)
-            if let storedMatch = matches.first,
-                let summaryData = storedMatch.aiSummaryData
-            {
-                let codableSummary = try JSONDecoder().decode(MatchAnalysisCodable.self, from: summaryData)
-                cachedSummary = codableSummary.toMatchAnalysis()
-                Log.ai.info("📖 Loaded cached AI summary from database")
-            }
-        } catch {
-            Log.ai.error("⚠️ Failed to load cached summary: \(error.localizedDescription)")
+        cachedSummary = MatchSummaryService.cachedSummary(for: matchId, in: EventStore(modelContext: modelContext))
+        if cachedSummary != nil {
+            Log.ai.debug("Loaded the cached summary for match \(self.matchId)")
         }
-    }
-
-    private func extractPlayerName(_ player: Int) -> String {
-        guard let name = matchResult.name else { return "Player \(player)" }
-        let components = name.components(separatedBy: " vs ")
-        guard components.count == 2 else { return "Player \(player)" }
-        return player == 1
-            ? components[0].trimmingCharacters(in: .whitespaces)
-            : components[1].trimmingCharacters(in: .whitespaces)
     }
 }

@@ -1032,35 +1032,18 @@ class WatchConnectivityManager: NSObject {
 
     // MARK: - AI Summary Generation
 
+    /// Generates and saves the summary through the shared service, which persists it by
+    /// `match.id` (== `matchId`) and joins a generation already running for this match (e.g. one
+    /// started from the detail view) instead of racing it.
     private func generateAISummary(for match: MatchResult, matchId: UUID, allMatches: [MatchResult]) async {
-        Log.match.debug("🤖 Auto-generating AI summary...")
-        let summaryService = MatchSummaryService()
-
-        guard summaryService.isAvailable else {
-            Log.match.warning("🤖 AI summary not available: \(summaryService.availabilityDescription)")
-            return
-        }
-
-        guard let summary = await summaryService.generateSummary(for: match, allMatches: allMatches) else {
-            if let error = summaryService.lastError {
-                Log.match.error("❌ AI summary generation failed: \(error.localizedDescription)")
-            }
-            return
-        }
-        Log.match.info("✅ AI summary generated: \(summary.matchSummary.headline)")
-
-        // Persist the summary against the match it belongs to (by id, never by name)
-        do {
-            let summaryData = try JSONEncoder().encode(MatchAnalysisCodable(from: summary))
-            if let storedMatch = try eventStore.getMatch(id: matchId) {
-                storedMatch.aiSummaryData = summaryData
-                try eventStore.updateMatch(storedMatch)
-                Log.match.info("💾 AI summary saved for match \(matchId)")
-            } else {
-                Log.match.warning("⚠️ Could not find match \(matchId) to save summary")
-            }
-        } catch {
-            Log.match.error("❌ Failed to save AI summary: \(error.localizedDescription)")
+        Log.match.debug("🤖 Auto-generating AI summary for match \(matchId)")
+        let result = await MatchSummaryService.shared.generateAndStoreSummary(
+            for: match, history: allMatches, store: eventStore)
+        switch result {
+        case .success(let summary):
+            Log.match.info("✅ AI summary generated for match \(matchId): \(summary.matchSummary.headline)")
+        case .failure(let error):
+            Log.match.warning("🤖 No AI summary for match \(matchId): \(error.localizedDescription)")
         }
     }
 
