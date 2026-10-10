@@ -14,7 +14,8 @@ struct ServingLogicTests {
     @Test(
         "Serve changes every two points before deuce",
         arguments: [
-            (0, 0, 1), (1, 0, 1), (2, 0, 2), (1, 2, 2), (2, 2, 1), (4, 1, 2), (3, 3, 1), (9, 0, 1),
+            (0, 0, 1), (1, 0, 1), (2, 0, 2), (1, 2, 2), (2, 2, 1), (4, 1, 1), (3, 3, 2), (9, 0, 1), (10, 9, 2),
+            (9, 10, 2),
         ])
     func serverBeforeDeuce(p1: Int, p2: Int, expected: Int) {
         #expect(ServingLogic.calculateCurrentServer(firstServer: 1, playerOneScore: p1, playerTwoScore: p2) == expected)
