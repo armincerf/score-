@@ -1,1 +1,40 @@
+# Xcode / build output
+build/
+DerivedData/
+*.xcarchive
+*.ipa
+*.dSYM
+*.dSYM.zip
+*.mobileprovision
+*.xcresult
+
+# Xcode user state
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+.swiftpm/xcode/
+*.xcworkspace/xcuserdata/
+.build/
+
+# Secrets / local env
 .envrc
+.env
+*.p8
+*.p12
+*.cer
+
+# macOS
+.DS_Store
+
+# Tooling caches
+.serena/cache/
+.claude/settings.local.json
+.swiftlint.cache
+
+# Apple-provided agent skills are exported locally by scripts/sync-xcode-skills.sh
+.claude/skills/swiftui-specialist/
+.claude/skills/swiftui-whats-new-27/
+.claude/skills/modernize-tests/
+.claude/skills/device-interaction/
+.claude/skills/audit-xcode-security-settings/
+.claude/skills/.xcode-skills-version
