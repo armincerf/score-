@@ -93,13 +93,54 @@ nonisolated struct MessageData: Sendable {
     }
 }
 
+/// One command for the phone. `actionId` is unique per command so the phone applies it once even when it arrives
+/// both live and from the `transferUserInfo` queue; `sentAt` is when the watch issued it.
+nonisolated struct WatchCommand: Sendable {
+    nonisolated enum Name: String, Sendable {
+        case incrementP1
+        case incrementP2
+        case highlight
+        case endGame
+        case endMatch
+        case requestSync
+
+        /// Score and highlight commands set `pendingAction` and are confirmed by the phone's state.
+        var awaitsConfirmation: Bool {
+            switch self {
+            case .incrementP1, .incrementP2, .highlight: true
+            case .endGame, .endMatch, .requestSync: false
+            }
+        }
+    }
+
+    let name: Name
+    let actionId: String
+    let sentAt: TimeInterval
+
+    init(_ name: Name, actionId: String = UUID().uuidString, sentAt: Date = Date()) {
+        self.name = name
+        self.actionId = actionId
+        self.sentAt = sentAt.timeIntervalSince1970
+    }
+
+    /// The WatchConnectivity payload (property-list values only).
+    var payload: [String: Any] {
+        ["command": name.rawValue, "actionId": actionId, "sentAt": sentAt]
+    }
+}
+
 @MainActor
 @Observable
 final class WatchSessionManager: NSObject {
     var scoreState = ScoreState()
     var isConnected = false
     var highlightCount = 0  // Track highlights marked this session
-    var pendingAction: PendingAction?
+    /// The score/highlight action waiting for the phone to confirm it; the UI dims that control meanwhile.
+    private(set) var pendingAction: PendingAction?
+    /// Commands queued with `transferUserInfo` that have not reached the phone yet.
+    private(set) var queuedCommandCount = 0
+    /// Bumped whenever a command fails or goes unconfirmed; drives the `.error` haptic.
+    private(set) var failedCommandCount = 0
 
     enum PendingAction {
         case player1Score
@@ -109,6 +150,7 @@ final class WatchSessionManager: NSObject {
 
     private var session: WCSession?
     private var pendingTimer: Timer?
+    private var pendingActionId: String?
 
     override init() {
         super.init()
@@ -122,130 +164,176 @@ final class WatchSessionManager: NSObject {
 
     // MARK: - Send to iPhone
 
-    private func sendCommand(_ command: String, data: [String: Any] = [:]) {
-        guard let session else { return }
-
-        var message = data
-        message["command"] = command
-
-        if session.isReachable {
-            session.sendMessage(message, replyHandler: nil) { error in
-                Log.session.error("Error sending command: \(error.localizedDescription)")
+    /// Sends a user command: live with `sendMessage` when the phone is reachable (the reply is the phone's state),
+    /// otherwise queued with `transferUserInfo`, which delivers in order, eventually, even if the app exits.
+    /// The phone dedupes by `actionId`, so a command sent both ways is applied once.
+    /// - Returns: true when the command was handed to WatchConnectivity (live or queued), so the caller plays
+    ///   its success haptic.
+    private func send(_ name: WatchCommand.Name, pending action: PendingAction? = nil) -> Bool {
+        guard let session, session.activationState == .activated else {
+            Log.session.error("Cannot send \(name.rawValue): session not activated")
+            signalFailure()
+            return false
+        }
+        let command = WatchCommand(name)
+        // While earlier commands are still queued, queue behind them so the phone applies taps in order.
+        if session.isReachable && session.outstandingUserInfoTransfers.isEmpty {
+            if let action {
+                beginPending(action, actionId: command.actionId)
             }
+            sendLive(command, on: session)
         } else {
-            // Phone not immediately reachable - queue via context
-            // Commands will be processed when phone wakes
-            do {
-                try session.updateApplicationContext(message)
-            } catch {
-                Log.session.error("Error updating context: \(error.localizedDescription)")
-            }
+            enqueue(command, on: session)
+        }
+        return true
+    }
+
+    /// Asks the phone for its state. Live only: an unreachable phone pushes its state through the application
+    /// context anyway, so a queued sync would be stale on arrival.
+    private func requestSync() {
+        guard let session, session.activationState == .activated, session.isReachable else { return }
+        sendLive(WatchCommand(.requestSync), on: session)
+        Log.session.debug("Requested sync from phone")
+    }
+
+    private func sendLive(_ command: WatchCommand, on session: WCSession) {
+        // WatchConnectivity calls both handlers on a background queue: @Sendable keeps them off the main actor,
+        // and only Sendable values cross into the hop.
+        session.sendMessage(
+            command.payload,
+            replyHandler: { @Sendable [weak self] reply in
+                let state = MessageData(from: reply)
+                Task { @MainActor in
+                    self?.didReceiveReply(state, to: command)
+                }
+            },
+            errorHandler: { @Sendable [weak self] error in
+                let reason = error.localizedDescription
+                Task { @MainActor in
+                    self?.liveSendFailed(command, reason: reason)
+                }
+            })
+    }
+
+    private func enqueue(_ command: WatchCommand, on session: WCSession) {
+        session.transferUserInfo(command.payload)
+        queuedCommandCount = session.outstandingUserInfoTransfers.count
+        Log.session.info(
+            "Queued \(command.name.rawValue) until the phone is reachable (\(self.queuedCommandCount) queued)")
+    }
+
+    /// The phone answers every live command with its full state.
+    private func didReceiveReply(_ state: MessageData, to command: WatchCommand) {
+        handleMessageData(state)
+        if pendingActionId == command.actionId {
+            clearPendingState()
         }
     }
 
-    private func sendScore() {
-        guard let session else { return }
-
-        let message = scoreState.toDictionary()
-
-        if session.isReachable {
-            session.sendMessage(message, replyHandler: nil) { error in
-                Log.session.error("Error sending: \(error.localizedDescription)")
-            }
+    /// The live send failed, or its reply never came. The phone may still have applied it, so it is queued again
+    /// under the same `actionId`, which the phone drops if it is a duplicate.
+    private func liveSendFailed(_ command: WatchCommand, reason: String) {
+        Log.session.error("Sending \(command.name.rawValue) failed: \(reason)")
+        guard command.name != .requestSync else { return }
+        if let session {
+            enqueue(command, on: session)
         }
-
-        do {
-            try session.updateApplicationContext(message)
-        } catch {
-            Log.session.error("Error updating context: \(error.localizedDescription)")
+        let wasPending = pendingActionId == command.actionId
+        if wasPending {
+            clearPendingState()
         }
+        // A score/highlight action that already timed out has had its error haptic.
+        if wasPending || !command.name.awaitsConfirmation {
+            signalFailure()
+        }
+    }
+
+    private func signalFailure() {
+        failedCommandCount += 1
     }
 
     // MARK: - Score Actions
 
-    func incrementPlayer1() {
-        // Don't allow multiple pending actions
-        guard pendingAction == nil else { return }
-
-        // Set pending state
-        pendingAction = .player1Score
-
-        // Send command to phone - phone is source of truth
-        sendCommand("incrementP1")
-
-        // Timeout after 2 seconds in case iOS doesn't respond
-        startPendingTimeout()
-
-        Log.session.debug("P1 scored - waiting for iOS confirmation")
+    /// - Returns: true when the tap was sent; false when it was ignored, e.g. while an earlier one is pending.
+    @discardableResult
+    func incrementPlayer1() -> Bool {
+        sendAwaitingConfirmation(.incrementP1, as: .player1Score)
     }
 
-    func incrementPlayer2() {
-        // Don't allow multiple pending actions
-        guard pendingAction == nil else { return }
-
-        // Set pending state
-        pendingAction = .player2Score
-
-        // Send command to phone - phone is source of truth
-        sendCommand("incrementP2")
-
-        // Timeout after 2 seconds in case iOS doesn't respond
-        startPendingTimeout()
-
-        Log.session.debug("P2 scored - waiting for iOS confirmation")
+    /// - Returns: true when the tap was sent; false when it was ignored, e.g. while an earlier one is pending.
+    @discardableResult
+    func incrementPlayer2() -> Bool {
+        sendAwaitingConfirmation(.incrementP2, as: .player2Score)
     }
 
-    private func startPendingTimeout() {
-        // Cancel any existing timer
+    /// One score/highlight action in flight at a time: the phone is the source of truth, so the watch waits for
+    /// its state (or the 2 s timeout) before accepting the next tap.
+    private func sendAwaitingConfirmation(_ name: WatchCommand.Name, as action: PendingAction) -> Bool {
+        guard pendingAction == nil else {
+            Log.session.debug("Ignored \(name.rawValue): waiting for the phone to confirm the previous action")
+            return false
+        }
+        return send(name, pending: action)
+    }
+
+    private func beginPending(_ action: PendingAction, actionId: String) {
+        pendingAction = action
+        pendingActionId = actionId
+
+        // Timeout after 2 seconds in case iOS doesn't respond
         pendingTimer?.invalidate()
-
-        // Set timeout to clear pending state if no response
         pendingTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: false) { [weak self] _ in
             Task { @MainActor in
-                self?.clearPendingState()
-                Log.session.warning("⚠️ Timeout waiting for iOS response")
+                self?.pendingTimedOut(actionId: actionId)
             }
         }
+    }
+
+    private func pendingTimedOut(actionId: String) {
+        // The action may have been confirmed (and a new one started) while this hop was queued.
+        guard pendingActionId == actionId else { return }
+        clearPendingState()
+        signalFailure()
+        Log.session.warning("⚠️ Timeout waiting for iOS response")
     }
 
     private func clearPendingState() {
         pendingTimer?.invalidate()
         pendingTimer = nil
         pendingAction = nil
+        pendingActionId = nil
     }
 
     // MARK: - Highlight Action (triggered by Double Tap gesture)
 
-    func markHighlight() {
+    /// - Returns: true when the highlight was sent; false when not recording or an action is pending.
+    @discardableResult
+    func markHighlight() -> Bool {
         // Only mark if we're recording
         guard scoreState.isRecording else {
             Log.session.debug("Not recording - highlight ignored")
-            return
+            return false
         }
 
-        // Don't allow multiple pending actions
-        guard pendingAction == nil else { return }
-
-        // Set pending state
-        pendingAction = .highlight
-
-        // Send highlight command to phone
-        sendCommand("highlight")
-
-        // Timeout after 2 seconds in case iOS doesn't respond
-        startPendingTimeout()
-
-        Log.session.info("⭐ HIGHLIGHT MARKED! Waiting for iOS confirmation")
+        let sent = sendAwaitingConfirmation(.highlight, as: .highlight)
+        if sent {
+            Log.session.info("⭐ HIGHLIGHT MARKED! Waiting for iOS confirmation")
+        }
+        return sent
     }
 
     // MARK: - Game/Match Actions (optional - can also be done from phone)
 
-    func endGame() {
-        sendCommand("endGame")
+    /// - Returns: true when the command was sent (live or queued).
+    @discardableResult
+    func endGame() -> Bool {
+        send(.endGame)
     }
 
-    func endMatch() {
-        sendCommand("endMatch")
+    /// - Returns: true when the command was sent (live or queued).
+    @discardableResult
+    func endMatch() -> Bool {
+        send(.endMatch)
     }
 }
 
@@ -257,21 +345,25 @@ extension WatchSessionManager: WCSessionDelegate {
     ) {
         let isActivated = activationState == .activated
         let isReachable = session.isReachable
-        let context = session.applicationContext
+        // The last state the phone pushed. (`applicationContext` is this side's own outgoing context.)
+        let context = session.receivedApplicationContext
         let messageData = context.isEmpty ? nil : MessageData(from: context)
+        // Transfers queued by an earlier run of the app are still pending after a relaunch.
+        let queued = session.outstandingUserInfoTransfers.count
 
         Task { @MainActor in
             self.isConnected = isActivated
+            self.queuedCommandCount = queued
             if let messageData {
                 self.handleMessageData(messageData)
             }
             if isActivated {
-                self.sendCommand("requestSync")
+                self.requestSync()
             }
         }
         Log.session.info("Session activated: \(activationState.rawValue), Reachable: \(isReachable)")
-        if isActivated {
-            Log.session.debug("Sent initial sync request to phone")
+        if let error {
+            Log.session.error("Session activation error: \(error.localizedDescription)")
         }
     }
 
@@ -280,10 +372,31 @@ extension WatchSessionManager: WCSessionDelegate {
         Task { @MainActor in
             self.isConnected = isReachable
             if isReachable {
-                self.sendCommand("requestSync")
+                self.requestSync()
             }
         }
         Log.session.info("Reachability: \(isReachable)")
+    }
+
+    /// A queued command reached the phone, or could not be delivered.
+    nonisolated func session(
+        _ session: WCSession, didFinish userInfoTransfer: WCSessionUserInfoTransfer, error: Error?
+    ) {
+        let remaining = session.outstandingUserInfoTransfers.count { $0 !== userInfoTransfer }
+        let command = userInfoTransfer.userInfo["command"] as? String ?? "?"
+        let reason = error?.localizedDescription
+
+        Task { @MainActor in
+            self.queuedCommandCount = remaining
+            if reason != nil {
+                self.signalFailure()
+            }
+        }
+        if let reason {
+            Log.session.error("Queued \(command) was not delivered: \(reason)")
+        } else {
+            Log.session.debug("Queued \(command) delivered (\(remaining) still queued)")
+        }
     }
 
     // Receive messages from iPhone

@@ -357,4 +357,77 @@ struct WatchCommandTests {
         #expect(result.winner == 1)
         #expect(result.playerOneGames == 1)
     }
+
+    // MARK: - Delivery (actionId dedupe)
+
+    /// A command as the current watch build sends it (`WatchCommand.payload` in the watch target).
+    nonisolated private static func watchCommand(
+        _ command: String, actionId: String = UUID().uuidString, sentAt: Date = Date()
+    ) -> [String: Any] {
+        ["command": command, "actionId": actionId, "sentAt": sentAt.timeIntervalSince1970]
+    }
+
+    @discardableResult
+    private func deliver(_ message: [String: Any], via delivery: WatchDelivery) -> Bool {
+        manager.receiveFromWatch(WatchMessageData(from: message), via: delivery)
+    }
+
+    // The watch re-queues a live command with transferUserInfo when sendMessage errors, which includes a reply
+    // timeout after the phone already applied it; so one tap can arrive by either path, or both.
+    @Test(
+        "The same actionId delivered twice scores one point, whichever paths carry it",
+        arguments: [
+            (WatchDelivery.message, WatchDelivery.message), (.message, .userInfo), (.userInfo, .message),
+            (.userInfo, .userInfo),
+        ])
+    func duplicateActionIdScoresOnce(first: WatchDelivery, second: WatchDelivery) throws {
+        let matchId = try startMatch()
+        let tap = Self.watchCommand("incrementP1")
+
+        #expect(deliver(tap, via: first))
+        #expect(!deliver(tap, via: second))
+        #expect(manager.scoreState.playerOneScore == 1 && manager.scoreState.playerTwoScore == 0)
+        #expect(try events(matchId).count == 2)
+
+        #expect(deliver(Self.watchCommand("incrementP1"), via: second))  // a new tap has a new id and scores
+        #expect(manager.scoreState.playerOneScore == 2)
+    }
+
+    @Test("Commands without an actionId (older watch builds) still work, every time they arrive")
+    func commandWithoutActionId() throws {
+        let matchId = try startMatch()
+        let legacy: [String: Any] = ["command": "incrementP2"]
+        let parsed = WatchMessageData(from: legacy)
+        #expect(parsed.command == "incrementP2" && parsed.actionId == nil && parsed.sentAt == nil)
+
+        #expect(deliver(legacy, via: .message))
+        #expect(deliver(legacy, via: .applicationContext))
+        #expect(manager.scoreState.playerTwoScore == 2)
+        #expect(try events(matchId).count == 3)
+    }
+
+    @Test("A command queued with transferUserInfo scores when it arrives, however late")
+    func userInfoCommandScores() throws {
+        let matchId = try startMatch()
+        let sentAt = Date(timeIntervalSinceNow: -90)  // tapped while the phone was out of range
+        let actionId = UUID().uuidString
+        let userInfo = Self.watchCommand("incrementP2", actionId: actionId, sentAt: sentAt)
+        let parsed = WatchMessageData(from: userInfo)
+        #expect(parsed.actionId == actionId && parsed.sentAt == sentAt.timeIntervalSince1970)
+
+        #expect(deliver(userInfo, via: .userInfo))
+        #expect(manager.isWatchAppInstalled)
+        #expect(manager.scoreState.playerOneScore == 0 && manager.scoreState.playerTwoScore == 1)
+        let point = try decode(PointScoredEvent.self, try events(matchId).last)
+        #expect(point.player == 2)
+    }
+
+    @Test("RecentActionIDs remembers the last `capacity` ids and forgets the oldest first")
+    func recentActionIdsAreBounded() {
+        var recent = RecentActionIDs(capacity: 3)
+        let ids = ["a", "b", "c", "a", "d", "a", "c", "d", "b"]
+        let isNew = ids.map { recent.insert($0) }
+        // "a" is a duplicate while remembered; "d" evicts it, so it is new again (evicting "b"), and so on.
+        #expect(isNew == [true, true, true, false, true, true, false, false, true])
+    }
 }
