@@ -1,15 +1,19 @@
 #!/usr/bin/env bash
 # Lint + format-check staged Swift files. Install with: git config core.hooksPath .githooks
+# Paths are NUL-separated end to end (the watch app folder has spaces).
 set -euo pipefail
-files=$(git diff --cached --name-only -z --diff-filter=ACMR -- '*.swift' || true)
-[[ -z "$files" ]] && exit 0
+if git diff --cached --quiet --diff-filter=ACMR -- '*.swift'; then
+  exit 0  # no staged Swift files
+fi
 status=0
 if command -v swiftlint >/dev/null; then
-  printf '%s' "$files" | xargs -0 swiftlint lint --strict --quiet --config .swiftlint.yml || status=1
+  git diff --cached --name-only -z --diff-filter=ACMR -- '*.swift' \
+    | xargs -0 swiftlint lint --strict --quiet --config .swiftlint.yml || status=1
 else
   echo "pre-commit: swiftlint not installed (brew install swiftlint); skipping lint" >&2
 fi
-printf '%s' "$files" | xargs -0 swift format lint --strict --configuration .swift-format || status=1
+git diff --cached --name-only -z --diff-filter=ACMR -- '*.swift' \
+  | xargs -0 swift format lint --strict --configuration .swift-format || status=1
 if [[ $status -ne 0 ]]; then
   echo "pre-commit: fix the issues above (try: make format) or commit with --no-verify" >&2
 fi
