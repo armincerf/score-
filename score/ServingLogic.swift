@@ -8,7 +8,7 @@
 
 import Foundation
 
-enum ServingLogic {
+nonisolated enum ServingLogic {
 
     // MARK: - Initial Server Determination
 

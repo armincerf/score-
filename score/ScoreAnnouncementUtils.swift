@@ -8,7 +8,7 @@
 
 import Foundation
 
-enum ScoreAnnouncementUtils {
+nonisolated enum ScoreAnnouncementUtils {
     
     struct ScoreAnnouncement {
         let text: String

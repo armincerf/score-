@@ -12,7 +12,7 @@ import Foundation
 
 /// Minimal state synced to watch (only current game info, no history)
 /// Reduces payload from 10-50KB to ~500 bytes
-struct WatchSyncState: Codable {
+nonisolated struct WatchSyncState: Codable {
     // Current game scores
     let playerOneScore: Int
     let playerTwoScore: Int
@@ -111,7 +111,7 @@ struct WatchSyncState: Codable {
 
 // MARK: - Pending Action (with UUID for race condition fix)
 
-struct PendingAction: Codable {
+nonisolated struct PendingAction: Codable {
     let id: UUID
     let type: ActionType
     let timestamp: Date

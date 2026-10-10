@@ -9,7 +9,7 @@ import Foundation
 
 // MARK: - Event Type Enum
 
-enum EventType: String, Codable, Sendable {
+nonisolated enum EventType: String, Codable, Sendable {
     case matchStarted
     case pointScored
     case highlightMarked
@@ -21,7 +21,7 @@ enum EventType: String, Codable, Sendable {
 
 // MARK: - Base Event Protocol
 
-protocol MatchEvent: Codable, Identifiable, Sendable {
+nonisolated protocol MatchEvent: Codable, Identifiable, Sendable {
     var id: UUID { get }
     var matchId: UUID { get }
     var timestamp: Date { get }
@@ -31,7 +31,7 @@ protocol MatchEvent: Codable, Identifiable, Sendable {
 
 // MARK: - Match Started Event
 
-struct MatchStartedEvent: MatchEvent {
+nonisolated struct MatchStartedEvent: MatchEvent {
     let id: UUID
     let matchId: UUID
     let timestamp: Date
@@ -72,7 +72,7 @@ struct MatchStartedEvent: MatchEvent {
 
 // MARK: - Point Scored Event
 
-struct PointScoredEvent: MatchEvent {
+nonisolated struct PointScoredEvent: MatchEvent {
     let id: UUID
     let matchId: UUID
     let timestamp: Date
@@ -104,7 +104,7 @@ struct PointScoredEvent: MatchEvent {
 
 // MARK: - Highlight Marked Event
 
-struct HighlightMarkedEvent: MatchEvent {
+nonisolated struct HighlightMarkedEvent: MatchEvent {
     let id: UUID
     let matchId: UUID
     let timestamp: Date
@@ -136,7 +136,7 @@ struct HighlightMarkedEvent: MatchEvent {
 
 // MARK: - Highlight Attributed Event
 
-struct HighlightAttributedEvent: MatchEvent {
+nonisolated struct HighlightAttributedEvent: MatchEvent {
     let id: UUID
     let matchId: UUID
     let timestamp: Date
@@ -165,7 +165,7 @@ struct HighlightAttributedEvent: MatchEvent {
 
 // MARK: - Game Ended Event
 
-struct GameEndedEvent: MatchEvent {
+nonisolated struct GameEndedEvent: MatchEvent {
     let id: UUID
     let matchId: UUID
     let timestamp: Date
@@ -203,7 +203,7 @@ struct GameEndedEvent: MatchEvent {
 
 // MARK: - Match Ended Event
 
-struct MatchEndedEvent: MatchEvent {
+nonisolated struct MatchEndedEvent: MatchEvent {
     let id: UUID
     let matchId: UUID
     let timestamp: Date
@@ -241,7 +241,7 @@ struct MatchEndedEvent: MatchEvent {
 
 // MARK: - Event Undone (Soft Delete)
 
-struct EventUndoneEvent: MatchEvent {
+nonisolated struct EventUndoneEvent: MatchEvent {
     let id: UUID
     let matchId: UUID
     let timestamp: Date

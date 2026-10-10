@@ -10,7 +10,7 @@ import Foundation
 
 // MARK: - Point Event (for video timestamp tracking)
 
-struct PointEvent: Codable, Sendable {
+nonisolated struct PointEvent: Codable, Sendable {
     let player: Int              // 1 or 2
     let timestamp: Date          // When point was scored
     var isHighlight: Bool        // Was this marked as a highlight?
@@ -28,7 +28,7 @@ struct PointEvent: Codable, Sendable {
 
 // MARK: - Highlight Event (for highlight reel generation)
 
-struct HighlightClip: Codable, Identifiable, Sendable {
+nonisolated struct HighlightClip: Codable, Identifiable, Sendable {
     let id: UUID
     let startTimestamp: Double   // Video time when clip starts (last score before highlight)
     let endTimestamp: Double     // Video time when highlight button was pressed
@@ -46,7 +46,7 @@ struct HighlightClip: Codable, Identifiable, Sendable {
 
 // MARK: - Game Result
 
-struct GameResult: Codable, Sendable {
+nonisolated struct GameResult: Codable, Sendable {
     let playerOneScore: Int
     let playerTwoScore: Int
     let winner: Int // 1 or 2
@@ -98,7 +98,7 @@ struct GameResult: Codable, Sendable {
 
 // MARK: - Match Result
 
-struct MatchResult: Codable, Sendable {
+nonisolated struct MatchResult: Codable, Sendable {
     let name: String?  // Match name (e.g., "John vs Jane")
     let playerOneGames: Int
     let playerTwoGames: Int
@@ -182,7 +182,7 @@ struct MatchResult: Codable, Sendable {
 
 // MARK: - Score State
 
-struct ScoreState: Codable, Sendable {
+nonisolated struct ScoreState: Codable, Sendable {
     var playerOneScore: Int
     var playerTwoScore: Int
     var playerOneGames: Int
