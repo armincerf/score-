@@ -43,15 +43,18 @@ score/                      iOS app target
   ScoreApp.swift              @main; builds the ModelContainer and WatchConnectivityManager
   ContentView.swift           Root view -> HomeView
   HomeView.swift              Start match (player-name sheet), resume, history, settings
-  GameView.swift              Live match: camera preview, status bar, ScoringPanel, alerts, export sheet
+  GameView.swift              Live match: camera preview, RecordingStatusBar (capture state), ScoringPanel, alerts
+  ExportProgressView.swift    Modal shown while finishActiveMatch() stops, exports and saves (Game + Home)
   MatchHistoryView.swift      List of finished matches (scoreState.matchHistory, reloaded from the store at launch)
   MatchDetailView.swift       One match: videos, AI summary, stats, games, highlights
   CameraSettingsView.swift    Lens/quality/enabled prefs + live preview; CameraDeviceType, VideoQualityPreset
   CameraPreviewManager.swift  Settings preview session (serial session queue, permission state) + CameraPreviewUIView (horizon-level preview)
   WatchConnectivityManager.swift           Phone hub: match lifecycle, scoring, recording, export, AI (see "Known debt")
   WatchConnectivityManager+WCSession.swift WCSessionDelegate: actionId dedupe + command dispatch from the watch
-  VideoRecordingManager.swift AVCaptureMovieFileOutput recording; async stop waits for file finalization
-  MediaExportService.swift    Full-video + highlight-reel export (AVVideoComposition.Configuration, export(to:as:))
+  VideoRecordingManager.swift Capture session + movie output; CaptureState (interrupted/failed...), segment callbacks, rotation coordinator
+  RecordingTimeline.swift     RecordingSegment + wall-clock offset -> concatenated-video time mapping (gaps clamp)
+  AudioSessionCoordinator.swift Owns AVAudioSession for a match (play-and-record to speaker; released at match end)
+  MediaExportService.swift    Concatenates segments upright (per-track preferredTransform) + cuts the reel; export(to:as:) with progress
   MockVideoGenerator.swift    Synthetic video for the simulator (no camera)
   VideoTransferable.swift     ShareLink/Transferable wrapper for exported videos
   VideoStore.swift            Application Support/Videos: per-match file names, stored references, legacy URL resolve
@@ -59,7 +62,7 @@ score/                      iOS app target
   ServingLogic.swift          Pure serving rules (first server, rotation, serve stats)
   ScoreAnnouncementUtils.swift Pure announcement text + game/match-point/won checks
   ScoreAnnouncer.swift        AVSpeechSynthesizer wrapper
-  EventModels.swift           Event types (matchStarted, pointScored, highlightMarked/Attributed, gameEnded, matchEnded, eventUndone)
+  EventModels.swift           Event types (matchStarted, pointScored, highlightMarked/Attributed, gameEnded, matchEnded, eventUndone, recordingSegmentStarted)
   SwiftDataModels.swift       @Model StoredMatch, StoredMatchEvent (JSON event payload), UserPreferences
   EventStore.swift            Append/query events and matches on the main ModelContext
   StateProjector.swift        Replays events into ScoreState (one `apply` per event type)
@@ -99,10 +102,23 @@ scripts/                    xcb.sh (xcodebuild filter), deploy-device.sh (device
   first) from the finished `StoredMatch`es; anything that re-projects the active match must
   keep that history. Undo marks an event `isUndone` and appends an
   `eventUndone` event; projection skips undone events.
-- **Recording**: `startRecording()` arms a 0.5 s timer that drives `recordingDuration`;
-  point/highlight video timestamps are read from it. `stopRecording()` is async and returns
-  the finalized file. `exportMatchVideos` writes a re-oriented full video and, if highlights
-  exist, a highlight reel; `endMatch` persists URLs and kicks off the AI summary.
+- **Match rules** live in `ScoreAnnouncementUtils`/`ServingLogic` and are applied by
+  `WatchConnectivityManager`: a game ends itself at 11 with two clear; a game win that
+  decides the best of five sets `matchWonBy` and GameView offers to end the match; End Game
+  records only finished games (or, as an explicit user choice, awards an unfinished game to
+  the leader) and never a tie; `endMatch` saves a finished unrecorded game, discards an
+  unfinished one and records `MatchResult.noWinner` for a games tie. The '-' buttons undo
+  that player's last point through the event log (`undoPoint(forPlayer:)`).
+- **Recording**: `startRecording()` marks the match live (watch scoring, timestamps,
+  highlights work with the camera off), arms the 0.5 s wall-clock timer behind
+  `recordingDuration`, activates the audio session and, with the camera on, starts capture.
+  Every event stores wall-clock offsets. Each movie file the camera starts is persisted as a
+  `recordingSegmentStarted` event (file reference + offset); interruptions (screen lock,
+  calls, relaunch) end a segment and `resumeVideoRecordingIfNeeded()` / the
+  interruption-ended callback start the next. `finishActiveMatch()` stops capture, builds a
+  `RecordingTimeline` from the segments on disk, exports the concatenated full video, maps
+  highlight ranges through the timeline into the reel, deletes the raw segments, then
+  `endMatch` persists `VideoStore` references and kicks off the AI summary.
 - **Isolation model**: everything is main-actor by default. Pure value types that cross
   into WCSession/AVFoundation callbacks are declared `nonisolated struct/enum`. Delegate
   callbacks are `nonisolated` and hop with `Task { @MainActor in ... }`.
@@ -163,12 +179,17 @@ and a `make build`. Shared schemes live in `score.xcodeproj/xcshareddata/xcschem
   simulator and on devices without Apple Intelligence; the UI shows the unavailable card.
 - The watch app shows the scoring UI only while `scoreState.isRecording` is true (the
   phone sets it in `startRecording()`).
-- `AVCaptureSession.startRunning()` blocks; it runs on a detached task, and recording
-  starts ~0.5 s later, so early video timestamps are offset by the session start-up time.
+- `AVCaptureSession.startRunning()` blocks; it runs on a detached task and the first file
+  starts ~0.5 s later. That is fine: the segment's `startOffset` records when footage really
+  began, and `RecordingTimeline` maps event offsets onto it.
+- GameView disables the idle timer while on screen (the phone sits on a stand); without it
+  the device locks after 30-60 s and the capture session is interrupted. The status bar
+  shows REC only while `videoManager.state == .recording`.
 - `AVCaptureDevice.RotationCoordinator` reports 0 degrees while its preview layer is not in a
   window, so `CameraPreviewUIView` rebuilds it in `didMoveToWindow` (and per device change).
-- `UIDevice.current.orientation` can be `.faceUp`/`.unknown`; export orientation is
-  captured at the first point and falls back to landscape.
+- Orientation comes from `AVCaptureDevice.RotationCoordinator` (capture and preview), never
+  `UIDevice.current.orientation`, which is `.faceUp`/`.unknown` for a phone lying flat. Export
+  rotates each segment by its own `preferredTransform`.
 - GitHub's `xcode-27` runner image is a preview; if it disappears, switch CI to
   `macos-26` + `xcode-select`.
 
@@ -178,8 +199,11 @@ and a `make build`. Shared schemes live in `score.xcodeproj/xcshareddata/xcschem
   export + AI + transport). Split the match lifecycle into its own `@Observable` type.
 - The watch target duplicates `ScoreState.swift`; a shared Swift package would remove the
   drift risk.
-- `WatchSyncState` is unused by the live protocol (full `ScoreState` dictionaries are sent,
-  including the whole match history, which grows without bound).
+- `WatchSyncState` is unused by the live protocol (full `ScoreState` dictionaries are sent;
+  match history is no longer included, so the payload is bounded by the current match).
+- `loadMatchHistory()` re-projects every finished match's events on the main actor at launch;
+  cache the projected games on `StoredMatch` once history grows into the hundreds.
+- Recording segments are concatenated at export; there is no UI to review or trim them.
 
 ## Skills
 
