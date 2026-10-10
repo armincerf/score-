@@ -34,6 +34,8 @@ struct ContentView: View {
                 WaitingView()
             }
         }
+        // A command failed, or the phone did not confirm it within the timeout.
+        .sensoryFeedback(.error, trigger: session.failedCommandCount)
     }
 }
 
@@ -78,6 +80,8 @@ struct EndGameView: View {
     @Environment(WatchSessionManager.self) private var session
     @State private var endGameTrigger = 0
     @State private var endMatchTrigger = 0
+    @State private var isConfirmingEndGame = false
+    @State private var isConfirmingEndMatch = false
 
     var body: some View {
         VStack(spacing: 20) {
@@ -87,10 +91,9 @@ struct EndGameView: View {
 
             Spacer()
 
-            // End Game Button
+            // End Game Button (asks first: a stray tap would end the game at the current score)
             Button(role: .destructive) {
-                session.endGame()
-                endGameTrigger += 1
+                isConfirmingEndGame = true
             } label: {
                 VStack(spacing: 8) {
                     Image(systemName: "flag.checkered")
@@ -104,12 +107,20 @@ struct EndGameView: View {
             .buttonStyle(.glass)
             .tint(.orange)
             .sensoryFeedback(.success, trigger: endGameTrigger)
+            .confirmationDialog("End this game?", isPresented: $isConfirmingEndGame, titleVisibility: .visible) {
+                Button("End Game", role: .destructive) {
+                    if session.endGame() {
+                        endGameTrigger += 1
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Records the current score as final. Recording continues.")
+            }
 
-            // End Match Button
+            // End Match Button (asks first; the phone then runs its own end-match flow)
             Button(role: .destructive) {
-                // End match - will be confirmed by iOS
-                session.endMatch()
-                endMatchTrigger += 1
+                isConfirmingEndMatch = true
             } label: {
                 VStack(spacing: 8) {
                     Image(systemName: "stop.circle")
@@ -123,6 +134,16 @@ struct EndGameView: View {
             .buttonStyle(.glass)
             .tint(.red)
             .sensoryFeedback(.success, trigger: endMatchTrigger)
+            .confirmationDialog("End the match?", isPresented: $isConfirmingEndMatch, titleVisibility: .visible) {
+                Button("End Match", role: .destructive) {
+                    if session.endMatch() {
+                        endMatchTrigger += 1
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Stops recording and saves the match on the phone.")
+            }
 
             Spacer()
 
@@ -154,8 +175,9 @@ struct ScoreControlView: View {
                 VStack(spacing: 0) {
                     // Player 1 Button - TOP HALF
                     Button {
-                        session.incrementPlayer1()
-                        scoreTrigger += 1
+                        if session.incrementPlayer1() {
+                            scoreTrigger += 1
+                        }
                     } label: {
                         VStack(spacing: 4) {
                             HStack(spacing: 4) {
@@ -176,6 +198,7 @@ struct ScoreControlView: View {
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .background(Color.blue)
+                        .awaitingPhone(session.pendingAction == .player1Score)
                     }
                     .buttonStyle(.plain)
 
@@ -191,12 +214,28 @@ struct ScoreControlView: View {
                     .font(.system(size: 12, weight: .bold, design: .rounded))
                     .padding(.vertical, 2)
                     .frame(maxWidth: .infinity)
+                    .overlay(alignment: .leading) {
+                        // Double Tap highlight waiting for the phone
+                        if session.pendingAction == .highlight {
+                            Image(systemName: "star.fill")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.yellow)
+                                .symbolEffect(.pulse)
+                                .padding(.leading, 8)
+                                .accessibilityLabel("Sending highlight")
+                        }
+                    }
+                    .overlay(alignment: .trailing) {
+                        QueuedCommandsBadge(queued: session.queuedCommandCount)
+                            .padding(.trailing, 8)
+                    }
                     .background(Color.black)
 
                     // Player 2 Button - BOTTOM HALF
                     Button {
-                        session.incrementPlayer2()
-                        scoreTrigger += 1
+                        if session.incrementPlayer2() {
+                            scoreTrigger += 1
+                        }
                     } label: {
                         VStack(spacing: 4) {
                             Text("\(session.scoreState.playerTwoScore)")
@@ -217,6 +256,7 @@ struct ScoreControlView: View {
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .background(Color.red)
+                        .awaitingPhone(session.pendingAction == .player2Score)
                     }
                     .buttonStyle(.plain)
                 }
@@ -233,8 +273,9 @@ struct ScoreControlView: View {
     }
 
     private func markHighlight() {
-        session.markHighlight()
-        scoreTrigger += 1
+        if session.markHighlight() {
+            scoreTrigger += 1
+        }
     }
 }
 
@@ -254,8 +295,9 @@ struct HighlightDetailsView: View {
 
             // Mark Highlight Button
             Button {
-                session.markHighlight()
-                highlightTrigger += 1
+                if session.markHighlight() {
+                    highlightTrigger += 1
+                }
             } label: {
                 VStack(spacing: 8) {
                     Image(systemName: "star.fill")
@@ -266,6 +308,7 @@ struct HighlightDetailsView: View {
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 30)
+                .awaitingPhone(session.pendingAction == .highlight)
             }
             .buttonStyle(.glassProminent)
             .tint(.yellow)
@@ -327,6 +370,46 @@ struct HighlightDetailsView: View {
                 .foregroundStyle(.tertiary)
         }
         .padding()
+    }
+}
+
+// MARK: - Command Status
+
+/// Dims a control and shows a spinner while its command waits for the phone's confirmation.
+struct AwaitingPhoneModifier: ViewModifier {
+    let isPending: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(isPending ? 0.5 : 1)
+            .overlay {
+                if isPending {
+                    ProgressView()
+                        .tint(.white)
+                        .accessibilityLabel("Sending to iPhone")
+                }
+            }
+            .animation(.easeInOut(duration: 0.15), value: isPending)
+    }
+}
+
+extension View {
+    func awaitingPhone(_ isPending: Bool) -> some View {
+        modifier(AwaitingPhoneModifier(isPending: isPending))
+    }
+}
+
+/// Taps queued for the phone while it is unreachable; they are delivered in order once it is back.
+struct QueuedCommandsBadge: View {
+    let queued: Int
+
+    var body: some View {
+        if queued > 0 {
+            Label("\(queued)", systemImage: "clock.arrow.circlepath")
+                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                .foregroundStyle(.orange)
+                .accessibilityLabel("\(queued) queued for iPhone")
+        }
     }
 }
 

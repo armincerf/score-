@@ -25,10 +25,17 @@ import UIKit
 /// Sendable wrapper for WCSession message data (iOS side)
 nonisolated struct WatchMessageData: Sendable {
     let command: String?
+    /// Unique per watch command (a UUID string). One command can arrive by `sendMessage` and again by the
+    /// watch's `transferUserInfo` fallback; the phone applies each id once. Nil from older watch builds.
+    let actionId: String?
+    /// When the watch issued the command (`timeIntervalSince1970`). Nil from older watch builds.
+    let sentAt: TimeInterval?
     let scoreState: ScoreState?
 
     init(from message: [String: Any]) {
         self.command = message["command"] as? String
+        self.actionId = message["actionId"] as? String
+        self.sentAt = message["sentAt"] as? TimeInterval
         self.scoreState = ScoreState(dictionary: message)
     }
 }
@@ -239,7 +246,9 @@ class WatchConnectivityManager: NSObject {
 
         // Use sendMessage for instant delivery (high priority)
         if session.isReachable {
-            session.sendMessage(message, replyHandler: nil) { error in
+            // @Sendable: WatchConnectivity calls the handler on its own queue. A main-actor closure (the default
+            // in this main-actor method) would fail Swift 6's executor check there and trap.
+            session.sendMessage(message, replyHandler: nil) { @Sendable error in
                 Log.match.error("Error sending highlight confirmation: \(error.localizedDescription)")
             }
             Log.match.debug("⭐ Highlight confirmation sent instantly to watch (count: \(highlightCount))")
@@ -264,7 +273,8 @@ class WatchConnectivityManager: NSObject {
         let message = scoreState.toDictionary()
 
         if session.isReachable {
-            session.sendMessage(message, replyHandler: nil) { error in
+            // @Sendable: called on WatchConnectivity's queue (see sendHighlightConfirmation).
+            session.sendMessage(message, replyHandler: nil) { @Sendable error in
                 Log.match.error("Error sending: \(error.localizedDescription)")
             }
         }
