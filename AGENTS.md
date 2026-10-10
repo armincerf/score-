@@ -191,11 +191,15 @@ and a `make build`. Shared schemes live in `score.xcodeproj/xcshareddata/xcschem
 
   ```
   ictool="/Applications/Xcode.app/Contents/Applications/Icon Composer.app/Contents/Executables/ictool"
-  "$ictool" score/AppIcon.icon --export-image --output-file /tmp/ios-default.png \
-    --platform iOS --rendition Default --width 1024 --height 1024 --scale 1
-  # also --rendition Dark, and --rendition TintedDark --tint-color 0.25 --tint-strength 0.75
-  "$ictool" "scorewatch Watch App/AppIcon.icon" --export-image --output-file /tmp/watch.png \
-    --platform watchOS --rendition Default --width 1024 --height 1024 --scale 1
+  size=(--width 512 --height 512 --scale 1)   # 1024 to inspect detail
+  "$ictool" score/AppIcon.icon --export-image --output-file docs/icons/ios-default.png \
+    --platform iOS --rendition Default "${size[@]}"
+  "$ictool" score/AppIcon.icon --export-image --output-file docs/icons/ios-dark.png \
+    --platform iOS --rendition Dark "${size[@]}"
+  "$ictool" score/AppIcon.icon --export-image --output-file docs/icons/ios-tinted-dark.png \
+    --platform iOS --rendition TintedDark --tint-color 0.25 --tint-strength 0.75 "${size[@]}"
+  "$ictool" "scorewatch Watch App/AppIcon.icon" --export-image \
+    --output-file docs/icons/watch-default.png --platform watchOS --rendition Default "${size[@]}"
   ```
 
   Run `ictool` by its full path (it finds its helper `icrtool` next to itself). After a build,
