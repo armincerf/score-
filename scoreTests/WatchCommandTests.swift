@@ -341,3 +341,177 @@ struct WatchCommandTests {
         #expect(result.playerOneGames == 1)
     }
 }
+
+// MARK: - History persistence
+
+extension WatchCommandTests {
+    /// A second manager on the same store, as after an app relaunch.
+    private func relaunch() -> WatchConnectivityManager {
+        let context = container.mainContext
+        let store = EventStore(modelContext: context)
+        let projector = StateProjector()
+        let relaunched = WatchConnectivityManager(
+            eventStore: store, stateProjector: projector,
+            undoService: UndoService(eventStore: store, stateProjector: projector), modelContext: context)
+        relaunched.scoreAnnouncer.isEnabled = false
+        return relaunched
+    }
+
+    private static func writeVideo(to url: URL) throws {
+        try Data("video".utf8).write(to: url)
+    }
+
+    @Test("Finished matches reload into history after a relaunch, oldest first, with games projected from events")
+    func historyReloads() throws {
+        let firstId = try startMatch("First")
+        manager.startRecording()
+        score(Array(repeating: 1, count: 11))
+        score([2, 2, 2] + Array(repeating: 1, count: 11))  // 11-3
+        manager.endMatch(fullVideoURL: nil, highlightVideoURL: nil)
+        let secondId = try startMatch("Second")
+        manager.startRecording()
+        score(Array(repeating: 2, count: 11))
+        manager.endMatch(fullVideoURL: nil, highlightVideoURL: nil)
+        let before = manager.scoreState.matchHistory
+
+        let reloaded = relaunch().scoreState.matchHistory
+
+        #expect(reloaded.map(\.id) == [firstId, secondId])
+        #expect(reloaded.map(\.name) == ["First", "Second"] && reloaded.map(\.winner) == [1, 2])
+        #expect(reloaded.map(\.games.count) == [2, 1])
+        for (old, new) in zip(before, reloaded) {
+            let stored = try #require(try eventStore.getMatch(id: new.id))
+            #expect(new.id == old.id && new.playerOneName == "Ann" && new.playerTwoName == "Bob")
+            #expect(new.playerOneGames == old.playerOneGames && new.playerTwoGames == old.playerTwoGames)
+            #expect(new.winner == old.winner && new.timestamp == stored.startTimestamp)
+            #expect(new.duration == stored.totalDuration)
+            #expect(new.games.map(\.playerOneScore) == old.games.map(\.playerOneScore))
+            #expect(new.games.map(\.playerTwoScore) == old.games.map(\.playerTwoScore))
+            #expect(new.games.map(\.winner) == old.games.map(\.winner))
+            #expect(new.games.map(\.firstServer) == old.games.map(\.firstServer))
+            #expect(new.games.map { $0.points.map(\.player) } == old.games.map { $0.points.map(\.player) })
+            #expect(new.totalPoints == old.totalPoints)
+        }
+    }
+
+    @Test("A relaunch leaves the active match out of history and restores it as the current match")
+    func historyReloadSkipsActiveMatch() throws {
+        let finishedId = try startMatch()
+        score(Array(repeating: 1, count: 11))
+        manager.endMatch(fullVideoURL: nil, highlightVideoURL: nil)
+        let activeId = try startMatch("Live")
+
+        let relaunched = relaunch()
+
+        #expect(relaunched.scoreState.matchHistory.map(\.id) == [finishedId])
+        #expect(relaunched.currentMatchId == activeId && relaunched.scoreState.currentMatchName == "Live")
+    }
+
+    @Test("The reloaded history decides the next first server: the previous loser serves")
+    func historyReloadPicksFirstServer() throws {
+        try startMatch()
+        score(Array(repeating: 1, count: 11))
+        manager.endMatch(fullVideoURL: nil, highlightVideoURL: nil)  // Ann wins 1-0
+
+        let relaunched = relaunch()
+        relaunched.setMatchName("Rematch", player1: "Ann", player2: "Bob")
+
+        #expect(relaunched.scoreState.matchHistory.count == 1)
+        #expect(relaunched.scoreState.servingPlayer == 2 && relaunched.scoreState.currentGameFirstServer == 2)
+    }
+
+    // refreshState(), which runs after every undo, replaces scoreState with a fresh projection of the active
+    // match. A projection carries no matchHistory, so one undo empties Home/Match History (and the history the
+    // next match's first server and AI summary read) until the next relaunch reloads it from the store.
+    @Test(
+        "Undoing a point keeps the match history",
+        .disabled("BUG: refreshState() drops scoreState.matchHistory when it re-projects after an undo"))
+    func undoKeepsHistory() throws {
+        try startMatch()
+        score(Array(repeating: 1, count: 11))
+        manager.endMatch(fullVideoURL: nil, highlightVideoURL: nil)
+        try startMatch("Rematch")
+        manager.incrementPlayer1()
+
+        manager.undoLastAction()
+
+        #expect(manager.scoreState.playerOneScore == 0)
+        #expect(manager.scoreState.matchHistory.count == 1)
+    }
+
+    @Test("A finished match stored without a winner reloads as no winner")
+    func historyReloadWithoutWinner() throws {
+        let stored = try eventStore.createMatch(
+            id: UUID(), matchName: "Abandoned", playerOneName: "Ann", playerTwoName: "Bob", startTimestamp: Date())
+        stored.isActive = false
+        try eventStore.updateMatch(stored)
+
+        let reloaded = try #require(relaunch().scoreState.matchHistory.first)
+
+        #expect(reloaded.id == stored.id && reloaded.name == "Abandoned")
+        #expect(reloaded.winner == MatchResult.noWinner && !reloaded.hasWinner && reloaded.games.isEmpty)
+    }
+
+    @Test("endMatch stores video references relative to the store; files elsewhere keep their absolute URL")
+    func endMatchStoresVideoReferences() throws {
+        let matchId = try startMatch()
+        let full = VideoStore.fileURL(matchId: matchId, kind: .full)
+        let legacy = URL.temporaryDirectory.appending(path: "highlight_\(UUID().uuidString).mov")
+
+        manager.endMatch(fullVideoURL: full, highlightVideoURL: legacy)
+
+        let result = try #require(manager.scoreState.matchHistory.first)
+        #expect(result.fullVideoURL == full.lastPathComponent && result.highlightVideoURL == legacy.absoluteString)
+        let stored = try #require(try eventStore.getMatch(id: matchId))
+        #expect(stored.fullVideoURL == full.lastPathComponent && stored.highlightVideoURL == legacy.absoluteString)
+        let ended = try decode(MatchEndedEvent.self, try events(matchId).last)
+        #expect(ended.highlightVideoURL == legacy.absoluteString)
+    }
+
+    @Test("A relaunch moves a surviving legacy tmp video into the store and repoints the match")
+    func historyReloadMigratesLegacyVideo() throws {
+        let matchId = try startMatch()
+        defer { VideoStore.removeAll(matchId: matchId) }
+        score(Array(repeating: 1, count: 11))
+        let legacy = URL.temporaryDirectory.appending(path: "full_\(UUID().uuidString).mov")
+        try Self.writeVideo(to: legacy)
+        let purged = URL.temporaryDirectory.appending(path: "highlight_\(UUID().uuidString).mov")  // never written
+        manager.endMatch(fullVideoURL: legacy, highlightVideoURL: purged)
+
+        let reloaded = try #require(relaunch().scoreState.matchHistory.first)
+
+        let moved = VideoStore.fileName(matchId: matchId, kind: .full)
+        #expect(reloaded.fullVideoURL == moved && VideoStore.exists(moved))
+        #expect(!FileManager.default.fileExists(atPath: legacy.path))
+        #expect(reloaded.highlightVideoURL == purged.absoluteString)  // nothing to move: left as-is
+        let stored = try #require(try eventStore.getMatch(id: matchId))
+        #expect(stored.fullVideoURL == moved && stored.highlightVideoURL == purged.absoluteString)
+    }
+
+    @Test("Deleting from history removes the StoredMatch, its events and its video files")
+    func deleteFromHistory() throws {
+        let keptId = try startMatch("Kept")
+        manager.endMatch(fullVideoURL: nil, highlightVideoURL: nil)
+        let matchId = try startMatch()
+        score(Array(repeating: 1, count: 11))
+        let full = VideoStore.fileURL(matchId: matchId, kind: .full)
+        let segment = VideoStore.fileURL(matchId: matchId, kind: .rawSegment(index: 0))
+        let legacy = URL.temporaryDirectory.appending(path: "highlight_\(UUID().uuidString).mov")
+        for url in [full, segment, legacy] {
+            try Self.writeVideo(to: url)
+        }
+        manager.endMatch(fullVideoURL: full, highlightVideoURL: legacy)
+        #expect(manager.scoreState.matchHistory.map(\.id) == [keptId, matchId])
+
+        manager.deleteMatchFromHistory(at: 5)  // out of range: ignored
+        #expect(manager.scoreState.matchHistory.count == 2)
+        manager.deleteMatchFromHistory(at: 1)
+
+        #expect(manager.scoreState.matchHistory.map(\.id) == [keptId])
+        #expect(try eventStore.getMatch(id: matchId) == nil)
+        #expect(try events(matchId).isEmpty)
+        #expect([full, segment, legacy].allSatisfy { !FileManager.default.fileExists(atPath: $0.path) })
+        #expect(try eventStore.getMatch(id: keptId) != nil && !events(keptId).isEmpty)
+        #expect(relaunch().scoreState.matchHistory.map(\.id) == [keptId])
+    }
+}

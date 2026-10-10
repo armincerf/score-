@@ -29,23 +29,27 @@ struct MatchHistoryView: View {
                 .padding(.vertical, 60)
                 .listRowBackground(Color.clear)
             } else {
-                ForEach(Array(connectivity.scoreState.matchHistory.enumerated().reversed()), id: \.offset) {
+                // History is oldest first; the list shows newest first. Rows are identified by match id.
+                ForEach(connectivity.scoreState.matchHistory.enumerated().reversed(), id: \.element.id) {
                     index, match in
                     NavigationLink(
                         destination: MatchDetailView(
                             match: match,
-                            matchNumber: connectivity.scoreState.matchHistory.count - index,
+                            matchNumber: index + 1,
                             allMatches: connectivity.scoreState.matchHistory
                         )
                     ) {
-                        MatchRowView(match: match, matchNumber: connectivity.scoreState.matchHistory.count - index)
+                        MatchRowView(match: match, matchNumber: index + 1)
                     }
                 }
-                .onDelete { indexSet in
-                    for displayIndex in indexSet {
-                        let reversedIndices = Array(connectivity.scoreState.matchHistory.indices.reversed())
-                        let actualIndex = reversedIndices[displayIndex]
-                        connectivity.deleteMatchFromHistory(at: actualIndex)
+                .onDelete { displayOffsets in
+                    // Resolve every row to its match id before deleting: each deletion shifts the indices
+                    let history = connectivity.scoreState.matchHistory
+                    let ids = displayOffsets.map { history[history.count - 1 - $0].id }
+                    for id in ids {
+                        if let index = connectivity.scoreState.matchHistory.firstIndex(where: { $0.id == id }) {
+                            connectivity.deleteMatchFromHistory(at: index)
+                        }
                     }
                 }
             }
@@ -66,41 +70,22 @@ struct MatchRowView: View {
         return formatter
     }
 
-    private func extractPlayerName(playerNumber: Int) -> String {
-        if let stored = playerNumber == 1 ? match.playerOneName : match.playerTwoName {
-            return stored.split(separator: " ").first.map(String.init) ?? stored
-        }
-        guard let name = match.name else {
-            return playerNumber == 1 ? "P1" : "P2"
-        }
-
-        // Extract base name (before timestamp)
-        let baseName: String
-        if let dashRange = name.range(of: " - ", options: .backwards) {
-            baseName = String(name[..<dashRange.lowerBound])
-        } else {
-            baseName = name
-        }
-
-        // Split by " vs "
-        if let vsRange = baseName.range(of: " vs ") {
-            if playerNumber == 1 {
-                let fullName = String(baseName[..<vsRange.lowerBound])
-                return fullName.split(separator: " ").first.map(String.init) ?? "P1"
-            }
-            let fullName = String(baseName[vsRange.upperBound...])
-            return fullName.split(separator: " ").first.map(String.init) ?? "P2"
-        }
-
-        return playerNumber == 1 ? "P1" : "P2"
+    /// First name of player 1 or 2, from the names stored with the match.
+    private func shortName(_ player: Int) -> String {
+        let fullName = player == 1 ? match.playerOneName : match.playerTwoName
+        return fullName?.split(separator: " ").first.map(String.init) ?? "P\(player)"
     }
 
     private var resultBadge: String {
         switch match.winner {
-        case 1: return "\(extractPlayerName(playerNumber: 1)) Won"
-        case 2: return "\(extractPlayerName(playerNumber: 2)) Won"
+        case 1: return "\(shortName(1)) Won"
+        case 2: return "\(shortName(2)) Won"
         default: return "No winner"
         }
+    }
+
+    private var hasVideo: Bool {
+        VideoStore.exists(match.highlightVideoURL) || VideoStore.exists(match.fullVideoURL)
     }
 
     private var winnerColor: Color {
@@ -172,8 +157,8 @@ struct MatchRowView: View {
                     .foregroundColor(.yellow)
                 }
 
-                // Video indicator
-                if match.highlightVideoURL != nil {
+                // Video indicator: only when a video file is actually on disk
+                if hasVideo {
                     Image(systemName: "play.circle.fill")
                         .foregroundColor(.green)
                 }
