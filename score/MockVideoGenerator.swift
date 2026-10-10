@@ -18,8 +18,10 @@ nonisolated enum MockVideoGenerator {
     /// Renders `duration` seconds of placeholder frames into a temporary .mov file.
     /// Runs off the main actor; returns nil if writing fails.
     @concurrent
-    static func generateMockVideo(duration: TimeInterval = 60.0) async -> URL? {
-        let fileURL = FileManager.default.temporaryDirectory
+    static func generateMockVideo(duration: TimeInterval = 60.0, to outputURL: URL? = nil) async -> URL? {
+        let fileURL =
+            outputURL
+            ?? FileManager.default.temporaryDirectory
             .appendingPathComponent("mock_match_\(Date().timeIntervalSince1970).mov")
         try? FileManager.default.removeItem(at: fileURL)
 

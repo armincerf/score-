@@ -2,67 +2,20 @@
 //  MediaExportService.swift
 //  score
 //
-//  Shared video export for the full match recording and the highlight reel.
-//  Uses the iOS 26+ value-type AVVideoComposition configuration API and the
-//  iOS 18+ async AVAssetExportSession API with live progress.
+//  Video export: concatenates the recorded segments of a match into one upright full video
+//  (each segment rotated by its own preferredTransform) and cuts highlight clips out of it.
+//  Uses the iOS 26+ value-type AVVideoComposition configuration API and the iOS 18+ async
+//  AVAssetExportSession API with live progress.
 //
 
 import AVFoundation
 import CoreMedia
 import Foundation
-import UIKit
 
 enum MediaExportService {
-    // MARK: - Video Orientation
-
-    enum VideoOrientation: Sendable, CustomStringConvertible {
-        case portrait
-        case portraitUpsideDown
-        case landscapeLeft
-        case landscapeRight
-
-        var description: String {
-            switch self {
-            case .portrait: return "portrait"
-            case .portraitUpsideDown: return "portraitUpsideDown"
-            case .landscapeLeft: return "landscapeLeft"
-            case .landscapeRight: return "landscapeRight"
-            }
-        }
-
-        var isLandscape: Bool {
-            self == .landscapeLeft || self == .landscapeRight
-        }
-
-        /// AVCaptureConnection.videoRotationAngle that records this orientation upright.
-        var rotationAngle: CGFloat {
-            switch self {
-            case .portrait: return 90
-            case .portraitUpsideDown: return 270
-            case .landscapeLeft: return 0
-            case .landscapeRight: return 180
-            }
-        }
-
-        static func from(deviceOrientation: UIDeviceOrientation) -> VideoOrientation {
-            switch deviceOrientation {
-            case .portrait: return .portrait
-            case .portraitUpsideDown: return .portraitUpsideDown
-            case .landscapeLeft: return .landscapeLeft
-            case .landscapeRight: return .landscapeRight
-            default: return .portrait
-            }
-        }
-
-        @MainActor
-        static func current() -> VideoOrientation {
-            from(deviceOrientation: UIDevice.current.orientation)
-        }
-    }
-
     // MARK: - Export Quality
 
-    enum ExportQuality: Sendable {
+    enum ExportQuality: Sendable, Equatable {
         case sd480p
         case hd720p
         case hd1080p
@@ -82,6 +35,16 @@ enum MediaExportService {
         }
 
         var fileType: AVFileType { .mov }
+
+        /// The export preset that keeps the user's chosen capture quality.
+        nonisolated static func matching(_ capture: VideoQualityPreset) -> ExportQuality {
+            switch capture {
+            case .low, .medium: return .sd480p
+            case .high, .hd720p: return .hd720p
+            case .hd1080p: return .hd1080p
+            case .hd4K: return .uhd4K
+            }
+        }
     }
 
     // MARK: - Export Result
@@ -100,6 +63,7 @@ enum MediaExportService {
 
     // MARK: - Highlight Clip Info
 
+    /// A clip in the time base of the source video (seconds).
     struct HighlightClipInfo: Sendable {
         let startTimestamp: Double
         let endTimestamp: Double
@@ -111,146 +75,57 @@ enum MediaExportService {
         }
     }
 
-    // MARK: - Export Options
-
-    struct ExportOptions: Sendable {
-        let quality: ExportQuality
-        let orientation: VideoOrientation
-        let includeAudio: Bool
-        let optimizeForNetworkUse: Bool
-
-        static let `default` = ExportOptions()
-
-        init(
-            quality: ExportQuality = .hd720p,
-            orientation: VideoOrientation = .landscapeLeft,
-            includeAudio: Bool = true,
-            optimizeForNetworkUse: Bool = true
-        ) {
-            self.quality = quality
-            self.orientation = orientation
-            self.includeAudio = includeAudio
-            self.optimizeForNetworkUse = optimizeForNetworkUse
-        }
-    }
-
     /// Progress callback in 0...1. Always invoked on the main actor.
     typealias ProgressHandler = @MainActor @Sendable (Double) -> Void
 
     // MARK: - Full Video Export
 
+    /// Concatenates `segments` (in order) into one upright movie.
     static func exportFullVideo(
-        from sourceURL: URL,
+        segments: [URL],
         to outputURL: URL,
-        orientation: VideoOrientation,
         quality: ExportQuality = .hd720p,
         progressHandler: @escaping ProgressHandler = { _ in }
     ) async throws -> ExportResult {
-        try await exportFullVideo(
-            from: sourceURL,
-            to: outputURL,
-            options: ExportOptions(quality: quality, orientation: orientation),
-            progressHandler: progressHandler
-        )
-    }
-
-    static func exportFullVideo(
-        from sourceURL: URL,
-        to outputURL: URL,
-        options: ExportOptions,
-        progressHandler: @escaping ProgressHandler = { _ in }
-    ) async throws -> ExportResult {
+        guard !segments.isEmpty else { throw ExportError.noVideoTrackInSource }
         try? FileManager.default.removeItem(at: outputURL)
 
-        let asset = AVURLAsset(url: sourceURL, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
-        let duration = try await asset.load(.duration)
-
-        let composition = try await createOrientedComposition(
-            from: asset,
-            orientation: options.orientation,
-            timeRanges: nil,
-            includeAudio: options.includeAudio
-        )
-
-        try await exportComposition(
-            composition.composition,
-            videoComposition: composition.videoComposition,
-            to: outputURL,
-            options: options,
-            progressHandler: progressHandler
-        )
+        let built = try await makeComposition(clips: segments.map { ($0, nil) })
+        try await exportComposition(built, to: outputURL, quality: quality, progressHandler: progressHandler)
 
         return ExportResult(
             outputURL: outputURL,
-            duration: CMTimeGetSeconds(duration),
+            duration: CMTimeGetSeconds(built.composition.duration),
             fileSize: fileSize(at: outputURL)
         )
     }
 
     // MARK: - Highlight Reel Export
 
+    /// Cuts `clips` (times in `source`'s time base) out of `source` into one reel, in order.
     static func exportHighlightReel(
-        from sourceURL: URL,
+        from source: URL,
         to outputURL: URL,
         clips: [HighlightClipInfo],
-        orientation: VideoOrientation,
         quality: ExportQuality = .hd720p,
         progressHandler: @escaping ProgressHandler = { _ in }
     ) async throws -> ExportResult {
-        try await exportHighlightReel(
-            from: sourceURL,
-            to: outputURL,
-            clips: clips,
-            options: ExportOptions(quality: quality, orientation: orientation),
-            progressHandler: progressHandler
-        )
-    }
-
-    static func exportHighlightReel(
-        from sourceURL: URL,
-        to outputURL: URL,
-        clips: [HighlightClipInfo],
-        options: ExportOptions,
-        progressHandler: @escaping ProgressHandler = { _ in }
-    ) async throws -> ExportResult {
-        guard !clips.isEmpty else {
-            throw ExportError.noClips
-        }
-
+        guard !clips.isEmpty else { throw ExportError.noClips }
         try? FileManager.default.removeItem(at: outputURL)
 
-        let asset = AVURLAsset(url: sourceURL, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
+        let asset = AVURLAsset(url: source, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
         let durationSeconds = CMTimeGetSeconds(try await asset.load(.duration))
         let timeRanges = clipTimeRanges(for: clips, assetDuration: durationSeconds)
+        guard !timeRanges.isEmpty else { throw ExportError.noClips }
 
-        guard !timeRanges.isEmpty else {
-            throw ExportError.noClips
-        }
-
-        let composition = try await createOrientedComposition(
-            from: asset,
-            orientation: options.orientation,
-            timeRanges: timeRanges,
-            includeAudio: options.includeAudio
-        )
-
-        try await exportComposition(
-            composition.composition,
-            videoComposition: composition.videoComposition,
-            to: outputURL,
-            options: options,
-            progressHandler: progressHandler
-        )
+        let built = try await makeComposition(clips: timeRanges.map { (source, $0) })
+        try await exportComposition(built, to: outputURL, quality: quality, progressHandler: progressHandler)
 
         let totalDuration = timeRanges.reduce(0) { $0 + CMTimeGetSeconds($1.duration) }
-        return ExportResult(
-            outputURL: outputURL,
-            duration: totalDuration,
-            fileSize: fileSize(at: outputURL)
-        )
+        return ExportResult(outputURL: outputURL, duration: totalDuration, fileSize: fileSize(at: outputURL))
     }
 
-    /// Converts highlight clips to time ranges inside the asset, dropping empty or out-of-range clips.
+    /// Converts clips to time ranges inside the asset, dropping empty or out-of-range clips.
     /// Pure so it can be unit-tested.
     nonisolated static func clipTimeRanges(for clips: [HighlightClipInfo], assetDuration: Double) -> [CMTimeRange] {
         clips.compactMap { clip -> CMTimeRange? in
@@ -265,141 +140,95 @@ enum MediaExportService {
         }
     }
 
+    /// Size of a track once its preferredTransform is applied, and the transform that puts
+    /// the rotated frame at the origin. Pure so it can be unit-tested.
+    nonisolated static func uprightGeometry(
+        naturalSize: CGSize, preferredTransform: CGAffineTransform
+    ) -> (size: CGSize, transform: CGAffineTransform) {
+        let rect = CGRect(origin: .zero, size: naturalSize).applying(preferredTransform)
+        let fix = CGAffineTransform(translationX: -rect.minX, y: -rect.minY)
+        return (CGSize(width: abs(rect.width), height: abs(rect.height)), preferredTransform.concatenating(fix))
+    }
+
     // MARK: - Private Implementation
 
-    private struct CompositionResult {
+    private struct BuiltComposition {
         let composition: AVMutableComposition
         let videoComposition: AVVideoComposition
     }
 
     private static func fileSize(at url: URL) -> Int64? {
-        (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64)
+        (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int64
     }
 
-    private static func createOrientedComposition(
-        from asset: AVURLAsset,
-        orientation: VideoOrientation,
-        timeRanges: [CMTimeRange]?,
-        includeAudio: Bool
-    ) async throws -> CompositionResult {
+    /// Inserts each (file, range) in order; nil range = the whole file. Every piece is rotated
+    /// upright with its own preferredTransform; the render size follows the first piece.
+    private static func makeComposition(clips: [(url: URL, range: CMTimeRange?)]) async throws -> BuiltComposition {
         let composition = AVMutableComposition()
-
         guard
             let videoTrack = composition.addMutableTrack(
-                withMediaType: .video,
-                preferredTrackID: kCMPersistentTrackID_Invalid
-            )
+                withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)
         else {
             throw ExportError.failedToCreateVideoTrack
         }
+        let audioTrack = composition.addMutableTrack(
+            withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
 
-        guard let sourceVideoTrack = try await asset.loadTracks(withMediaType: .video).first else {
-            throw ExportError.noVideoTrackInSource
-        }
+        var cursor = CMTime.zero
+        var instructions: [AVVideoCompositionInstruction] = []
+        var renderSize: CGSize?
 
-        var audioTrack: AVMutableCompositionTrack?
-        var sourceAudioTrack: AVAssetTrack?
-
-        if includeAudio {
-            sourceAudioTrack = try await asset.loadTracks(withMediaType: .audio).first
-            if sourceAudioTrack != nil {
-                audioTrack = composition.addMutableTrack(
-                    withMediaType: .audio,
-                    preferredTrackID: kCMPersistentTrackID_Invalid
-                )
+        for clip in clips {
+            let asset = AVURLAsset(url: clip.url, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
+            guard let sourceVideo = try await asset.loadTracks(withMediaType: .video).first else {
+                continue  // unreadable segment: skip rather than fail the whole export
             }
-        }
-
-        if let ranges = timeRanges {
-            var currentTime = CMTime.zero
-            for range in ranges {
-                try videoTrack.insertTimeRange(range, of: sourceVideoTrack, at: currentTime)
-                if let sourceAudio = sourceAudioTrack, let audioTrack {
-                    try? audioTrack.insertTimeRange(range, of: sourceAudio, at: currentTime)
-                }
-                currentTime = CMTimeAdd(currentTime, range.duration)
+            let range: CMTimeRange
+            if let explicit = clip.range {
+                range = explicit
+            } else {
+                range = CMTimeRange(start: .zero, duration: try await asset.load(.duration))
             }
-        } else {
-            let duration = try await asset.load(.duration)
-            let fullRange = CMTimeRange(start: .zero, duration: duration)
-            try videoTrack.insertTimeRange(fullRange, of: sourceVideoTrack, at: .zero)
-            if let sourceAudio = sourceAudioTrack, let audioTrack {
-                try? audioTrack.insertTimeRange(fullRange, of: sourceAudio, at: .zero)
+            try videoTrack.insertTimeRange(range, of: sourceVideo, at: cursor)
+            if let audioTrack, let sourceAudio = try await asset.loadTracks(withMediaType: .audio).first {
+                try? audioTrack.insertTimeRange(range, of: sourceAudio, at: cursor)
             }
+
+            let (naturalSize, preferredTransform) = try await sourceVideo.load(.naturalSize, .preferredTransform)
+            let geometry = uprightGeometry(naturalSize: naturalSize, preferredTransform: preferredTransform)
+            if renderSize == nil { renderSize = geometry.size }
+
+            var layer = AVVideoCompositionLayerInstruction.Configuration(assetTrack: videoTrack)
+            layer.setTransform(geometry.transform, at: cursor)
+            let instruction = AVVideoCompositionInstruction.Configuration(
+                layerInstructions: [AVVideoCompositionLayerInstruction(configuration: layer)],
+                timeRange: CMTimeRange(start: cursor, duration: range.duration)
+            )
+            instructions.append(AVVideoCompositionInstruction(configuration: instruction))
+            cursor = CMTimeAdd(cursor, range.duration)
         }
 
-        let naturalSize = try await sourceVideoTrack.load(.naturalSize)
-        let preferredTransform = try await sourceVideoTrack.load(.preferredTransform)
-
-        let videoComposition = createVideoComposition(
-            for: composition,
-            videoTrack: videoTrack,
-            naturalSize: naturalSize,
-            sourceTransform: preferredTransform,
-            targetOrientation: orientation
-        )
-
-        return CompositionResult(composition: composition, videoComposition: videoComposition)
-    }
-
-    private static func createVideoComposition(
-        for composition: AVMutableComposition,
-        videoTrack: AVMutableCompositionTrack,
-        naturalSize: CGSize,
-        sourceTransform: CGAffineTransform,
-        targetOrientation: VideoOrientation
-    ) -> AVVideoComposition {
-        let isSourceRotated = abs(sourceTransform.b) == 1.0
-        let sourceWidth = isSourceRotated ? naturalSize.height : naturalSize.width
-        let sourceHeight = isSourceRotated ? naturalSize.width : naturalSize.height
-
-        let renderSize: CGSize
-        let layerTransform: CGAffineTransform
-
-        switch targetOrientation {
-        case .landscapeLeft:
-            renderSize = CGSize(width: sourceWidth, height: sourceHeight)
-            layerTransform = .identity
-        case .landscapeRight:
-            renderSize = CGSize(width: sourceWidth, height: sourceHeight)
-            layerTransform = CGAffineTransform(translationX: sourceWidth, y: sourceHeight).rotated(by: .pi)
-        case .portrait:
-            renderSize = CGSize(width: sourceHeight, height: sourceWidth)
-            layerTransform = CGAffineTransform(translationX: sourceHeight, y: 0).rotated(by: .pi / 2)
-        case .portraitUpsideDown:
-            renderSize = CGSize(width: sourceHeight, height: sourceWidth)
-            layerTransform = CGAffineTransform(translationX: 0, y: sourceWidth).rotated(by: -.pi / 2)
-        }
-
-        var layer = AVVideoCompositionLayerInstruction.Configuration(assetTrack: videoTrack)
-        layer.setTransform(sourceTransform.concatenating(layerTransform), at: .zero)
-
-        let instruction = AVVideoCompositionInstruction.Configuration(
-            layerInstructions: [AVVideoCompositionLayerInstruction(configuration: layer)],
-            timeRange: CMTimeRange(start: .zero, duration: composition.duration)
-        )
-
+        guard let renderSize, cursor > .zero else { throw ExportError.noVideoTrackInSource }
         let configuration = AVVideoComposition.Configuration(
             frameDuration: CMTime(value: 1, timescale: 30),
-            instructions: [AVVideoCompositionInstruction(configuration: instruction)],
+            instructions: instructions,
             renderSize: renderSize
         )
-        return AVVideoComposition(configuration: configuration)
+        return BuiltComposition(
+            composition: composition, videoComposition: AVVideoComposition(configuration: configuration))
     }
 
     private static func exportComposition(
-        _ composition: AVMutableComposition,
-        videoComposition: AVVideoComposition?,
+        _ built: BuiltComposition,
         to outputURL: URL,
-        options: ExportOptions,
+        quality: ExportQuality,
         progressHandler: @escaping ProgressHandler
     ) async throws {
-        guard let exportSession = AVAssetExportSession(asset: composition, presetName: options.quality.preset) else {
+        guard let exportSession = AVAssetExportSession(asset: built.composition, presetName: quality.preset) else {
             throw ExportError.failedToCreateExportSession
         }
-
-        exportSession.videoComposition = videoComposition
-        exportSession.shouldOptimizeForNetworkUse = options.optimizeForNetworkUse
+        exportSession.videoComposition = built.videoComposition
+        exportSession.shouldOptimizeForNetworkUse = true
 
         let states = exportSession.states(updateInterval: 0.25)
         let progressTask = Task {
@@ -411,7 +240,7 @@ enum MediaExportService {
         }
         defer { progressTask.cancel() }
 
-        try await exportSession.export(to: outputURL, as: options.quality.fileType)
+        try await exportSession.export(to: outputURL, as: quality.fileType)
         progressHandler(1.0)
     }
 

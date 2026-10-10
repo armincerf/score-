@@ -19,17 +19,7 @@ class ScoreAnnouncer: NSObject {
     override init() {
         super.init()
         synthesizer.delegate = self
-        configureAudioSession()
-    }
-
-    private func configureAudioSession() {
-        do {
-            let audioSession = AVAudioSession.sharedInstance()
-            try audioSession.setCategory(.playback, mode: .default, options: [.duckOthers, .mixWithOthers])
-            try audioSession.setActive(true)
-        } catch {
-            Log.audio.error("Failed to configure audio session: \(error)")
-        }
+        // The audio session is owned by AudioSessionCoordinator (activated per match)
     }
 
     func announceScore(

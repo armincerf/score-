@@ -124,8 +124,8 @@ struct GameView: View {
                 connectivity.startRecording()
                 Log.ui.debug("🎮 startRecording() completed")
             } else {
-                Log.ui.debug("🎮 Already recording, skipping startRecording()")
-                // If already recording, capture session should already exist
+                // Relaunch or return after an interruption: make sure the camera is capturing again
+                connectivity.resumeVideoRecordingIfNeeded()
                 captureSession = connectivity.videoManager?.captureSession
             }
 
@@ -259,7 +259,7 @@ struct GameView: View {
 
 // MARK: - Subviews
 
-/// Match name, REC indicator with elapsed time, and highlight count.
+/// Match name, capture status (REC with elapsed time, or why nothing is being recorded), highlight count.
 private struct RecordingStatusBar: View {
     @Environment(WatchConnectivityManager.self) private var connectivity
     let cameraEnabled: Bool
@@ -273,31 +273,7 @@ private struct RecordingStatusBar: View {
             }
 
             HStack {
-                if cameraEnabled {
-                    HStack(spacing: 8) {
-                        Circle()
-                            .fill(Color.red)
-                            .frame(width: 12, height: 12)
-                        Text("REC")
-                            .font(.subheadline)
-                            .bold()
-                        Text(
-                            Duration.seconds(connectivity.recordingDuration),
-                            format: .time(pattern: .minuteSecond(padMinuteToLength: 2))
-                        )
-                        .font(.subheadline)
-                        .monospacedDigit()
-                    }
-                    .foregroundColor(.white)
-                } else {
-                    HStack(spacing: 8) {
-                        Image(systemName: "video.slash")
-                            .font(.subheadline)
-                        Text("Video disabled in settings")
-                            .font(.subheadline)
-                    }
-                    .foregroundColor(.gray)
-                }
+                captureStatus
 
                 Spacer()
 
@@ -313,6 +289,43 @@ private struct RecordingStatusBar: View {
         }
         .padding()
         .glassEffect(in: .rect(cornerRadius: 0))
+    }
+
+    @ViewBuilder private var captureStatus: some View {
+        let state = connectivity.videoManager?.state
+        if !cameraEnabled {
+            statusLabel("video.slash", "Video disabled in settings", .gray)
+        } else if state?.isRecording == true {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(Color.red)
+                    .frame(width: 12, height: 12)
+                Text("REC")
+                    .font(.subheadline)
+                    .bold()
+                Text(
+                    Duration.seconds(connectivity.recordingDuration),
+                    format: .time(pattern: .minuteSecond(padMinuteToLength: 2))
+                )
+                .font(.subheadline)
+                .monospacedDigit()
+            }
+            .foregroundColor(.white)
+        } else {
+            statusLabel("exclamationmark.triangle.fill", state?.userMessage ?? "Starting camera…", .orange)
+        }
+    }
+
+    private func statusLabel(_ systemImage: String, _ text: String, _ color: Color) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: systemImage)
+                .font(.subheadline)
+            Text(text)
+                .font(.subheadline)
+                .lineLimit(2)
+                .minimumScaleFactor(0.7)
+        }
+        .foregroundColor(color)
     }
 }
 
@@ -476,6 +489,8 @@ class CameraPreviewViewController: UIViewController {
     }
 
     private var previewLayer: AVCaptureVideoPreviewLayer?
+    private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
+    private var rotationObservation: NSKeyValueObservation?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -492,11 +507,9 @@ class CameraPreviewViewController: UIViewController {
     override func viewWillTransition(to size: CGSize, with coordinator: UIViewControllerTransitionCoordinator) {
         super.viewWillTransition(to: size, with: coordinator)
 
-        // Update frame and orientation during rotation animation
+        // Keep the layer filling the view during rotation; the rotation coordinator handles the angle
         coordinator.animate(alongsideTransition: { [weak self] _ in
-            guard let self else { return }
-            self.previewLayer?.frame = CGRect(origin: .zero, size: size)
-            self.updatePreviewOrientation()
+            self?.previewLayer?.frame = CGRect(origin: .zero, size: size)
         })
     }
 
@@ -508,52 +521,35 @@ class CameraPreviewViewController: UIViewController {
         previewLayer = layer
 
         updatePreviewSession()
-        updatePreviewOrientation()
 
         Log.video.info("📹 Created preview layer")
     }
 
     private func updatePreviewSession() {
         previewLayer?.session = captureSession
-    }
-
-    private func updatePreviewOrientation() {
-        guard let connection = previewLayer?.connection else { return }
-
-        // Use window scene for accurate orientation (works better than UIDevice orientation)
-        let orientation: UIInterfaceOrientation
-        if let windowScene = view.window?.windowScene {
-            orientation = windowScene.effectiveGeometry.interfaceOrientation
-        } else {
-            // Fallback to device orientation
-            let deviceOrientation = UIDevice.current.orientation
-            switch deviceOrientation {
-            case .portrait: orientation = .portrait
-            case .portraitUpsideDown: orientation = .portraitUpsideDown
-            case .landscapeLeft: orientation = .landscapeRight
-            case .landscapeRight: orientation = .landscapeLeft
-            default: orientation = .portrait
+        rotationObservation = nil
+        rotationCoordinator = nil
+        guard let layer = previewLayer,
+            let device = captureSession?.inputs.compactMap({ ($0 as? AVCaptureDeviceInput)?.device }).first
+        else { return }
+        // Follows the device's physical orientation (works when the phone lies flat on a stand)
+        let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: layer)
+        rotationCoordinator = coordinator
+        rotationObservation = coordinator.observe(
+            \.videoRotationAngleForHorizonLevelPreview, options: [.initial, .new]
+        ) {
+            [weak self] coordinator, _ in
+            let angle = coordinator.videoRotationAngleForHorizonLevelPreview
+            Task { @MainActor in
+                self?.applyPreviewRotation(angle)
             }
         }
+    }
 
-        let rotationAngle: CGFloat
-        switch orientation {
-        case .portrait:
-            rotationAngle = 90
-        case .portraitUpsideDown:
-            rotationAngle = 270
-        case .landscapeLeft:
-            rotationAngle = 180
-        case .landscapeRight:
-            rotationAngle = 0
-        default:
-            rotationAngle = 90
-        }
-
-        if connection.isVideoRotationAngleSupported(rotationAngle) {
-            connection.videoRotationAngle = rotationAngle
-            Log.video.debug("📱 Orientation updated to angle: \(rotationAngle) (interface: \(orientation.rawValue))")
-        }
+    private func applyPreviewRotation(_ angle: CGFloat) {
+        guard let connection = previewLayer?.connection, connection.isVideoRotationAngleSupported(angle) else { return }
+        connection.videoRotationAngle = angle
+        Log.video.debug("📱 Preview rotation angle: \(angle)")
     }
 }
 

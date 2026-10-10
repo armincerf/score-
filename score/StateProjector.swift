@@ -52,6 +52,10 @@ class StateProjector {
             apply(try decoder.decode(GameEndedEvent.self, from: storedEvent.eventData), to: &replay)
         case .matchEnded:
             replay.state.isRecording = false
+        case .recordingSegmentStarted:
+            let event = try decoder.decode(RecordingSegmentStartedEvent.self, from: storedEvent.eventData)
+            replay.state.recordingSegments.append(
+                RecordingSegment(fileReference: event.fileReference, startOffset: event.startOffset))
         case .eventUndone, .none:
             break  // Undo markers and unknown types carry no state
         }

@@ -16,7 +16,6 @@ import UIKit
 
 @Suite("MediaAndSummary")
 struct MediaAndSummaryTests {
-    typealias Orientation = MediaExportService.VideoOrientation
     typealias Quality = MediaExportService.ExportQuality
 
     // MARK: - Helpers
@@ -92,37 +91,34 @@ struct MediaAndSummaryTests {
         #expect(clip(4, 1.5).duration == -2.5)
     }
 
-    // MARK: - Video orientation
+    // MARK: - Upright geometry
 
-    @Test(
-        "Device orientation maps to video orientation, with portrait as the fallback",
-        arguments: [
-            (UIDeviceOrientation.portrait, Orientation.portrait),
-            (.portraitUpsideDown, .portraitUpsideDown),
-            (.landscapeLeft, .landscapeLeft),
-            (.landscapeRight, .landscapeRight),
-            (.faceUp, .portrait),
-            (.faceDown, .portrait),
-            (.unknown, .portrait),
-        ])
-    func orientationMapping(device: UIDeviceOrientation, expected: Orientation) {
-        #expect(Orientation.from(deviceOrientation: device) == expected)
+    @Test("A portrait recording (90° preferredTransform) renders as a 720x1280 frame at the origin")
+    func uprightGeometryPortrait() {
+        // What AVCaptureMovieFileOutput writes for videoRotationAngle 90 on a 1280x720 sensor
+        let transform = CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 720, ty: 0)
+        let geometry = MediaExportService.uprightGeometry(
+            naturalSize: CGSize(width: 1280, height: 720), preferredTransform: transform)
+        #expect(geometry.size == CGSize(width: 720, height: 1280))
+        let frame = CGRect(origin: .zero, size: CGSize(width: 1280, height: 720)).applying(geometry.transform)
+        #expect(abs(frame.minX) < 0.001 && abs(frame.minY) < 0.001)
     }
 
-    @Test(
-        "Rotation angle, description and landscape flag per orientation",
-        arguments: [
-            (Orientation.portrait, CGFloat(90), "portrait", false),
-            (.portraitUpsideDown, CGFloat(270), "portraitUpsideDown", false),
-            (.landscapeLeft, CGFloat(0), "landscapeLeft", true),
-            (.landscapeRight, CGFloat(180), "landscapeRight", true),
-        ])
-    func orientationProperties(orientation: Orientation, angle: CGFloat, description: String, isLandscape: Bool) {
-        // `rotationAngle` is CGFloat; comparing it with a Double inside #expect resolves to a mixed-type `==`
-        // that fails even for equal values, so the expected angle must be a CGFloat too.
-        #expect(orientation.rotationAngle == angle)
-        #expect(orientation.description == description)
-        #expect(orientation.isLandscape == isLandscape)
+    @Test("An upright landscape recording keeps its size and identity transform")
+    func uprightGeometryLandscape() {
+        let geometry = MediaExportService.uprightGeometry(
+            naturalSize: CGSize(width: 1920, height: 1080), preferredTransform: .identity)
+        #expect(geometry.size == CGSize(width: 1920, height: 1080) && geometry.transform == .identity)
+    }
+
+    @Test("A 180° recording whose transform maps the frame to negative coordinates is moved back to the origin")
+    func uprightGeometryUpsideDown() {
+        let transform = CGAffineTransform(rotationAngle: .pi)  // no translation: frame lands at (-w, -h)
+        let geometry = MediaExportService.uprightGeometry(
+            naturalSize: CGSize(width: 100, height: 50), preferredTransform: transform)
+        #expect(abs(geometry.size.width - 100) < 0.001 && abs(geometry.size.height - 50) < 0.001)
+        let frame = CGRect(origin: .zero, size: CGSize(width: 100, height: 50)).applying(geometry.transform)
+        #expect(abs(frame.minX) < 0.001 && abs(frame.minY) < 0.001)
     }
 
     // MARK: - Export quality and options
@@ -142,15 +138,14 @@ struct MediaAndSummaryTests {
         #expect(quality.fileType == .mov)
     }
 
-    @Test("Export options default to 720p landscape-left with audio, optimised for network use")
-    func exportOptionDefaults() {
-        let options = MediaExportService.ExportOptions.default
-        #expect(options.quality == .hd720p)
-        #expect(options.orientation == .landscapeLeft)
-        #expect(options.includeAudio)
-        #expect(options.optimizeForNetworkUse)
-        let result = MediaExportService.ExportResult(outputURL: URL(fileURLWithPath: "/tmp/x.mov"), duration: 1)
-        #expect(result.fileSize == nil)
+    @Test(
+        "Export quality follows the capture preset",
+        arguments: [
+            (VideoQualityPreset.low, Quality.sd480p), (.medium, .sd480p), (.high, .hd720p), (.hd720p, .hd720p),
+            (.hd1080p, .hd1080p), (.hd4K, .uhd4K),
+        ])
+    func exportQualityMatchesCapture(capture: VideoQualityPreset, expected: Quality) {
+        #expect(Quality.matching(capture) == expected)
     }
 
     @Test(

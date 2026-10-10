@@ -3,7 +3,9 @@
 //  score
 //
 //  Owns the AVCaptureSession used to record the match and the movie file output.
-//  All state is main-actor isolated; AVFoundation delegate callbacks hop back onto it.
+//  Reports capture state (including interruptions such as screen lock, calls or the system
+//  stopping the file) so the UI can be honest and the match can resume into a new segment.
+//  All state is main-actor isolated; AVFoundation callbacks hop back onto it.
 //
 
 @preconcurrency import AVFoundation
@@ -15,13 +17,45 @@ import os
 @MainActor
 @Observable
 final class VideoRecordingManager: NSObject {
-    var error: String?
+    enum CaptureState: Equatable {
+        case idle
+        case configuring
+        /// Session running, not writing a file.
+        case ready
+        case recording
+        /// Capture stopped by the system; the session resumes on its own when the cause ends.
+        case interrupted(String)
+        case failed(String)
+
+        var isRecording: Bool { self == .recording }
+
+        /// Short text for the status bar when nothing is being written.
+        var userMessage: String? {
+            switch self {
+            case .interrupted(let reason): return "Recording paused: \(reason)"
+            case .failed(let reason): return "Recording stopped: \(reason)"
+            case .configuring: return "Starting camera…"
+            default: return nil
+            }
+        }
+    }
+
+    private(set) var state: CaptureState = .idle
     var captureSession: AVCaptureSession?
-    var currentVideoURL: URL?
+    private(set) var currentVideoURL: URL?
+
+    /// A movie file has actually begun capturing (URL, wall-clock time).
+    var onSegmentStarted: ((URL, Date) -> Void)?
+    /// A file finished for a reason other than stopRecording() (interruption or system stop).
+    var onSegmentInterrupted: ((URL) -> Void)?
+    /// A capture interruption ended and the session is running again: start a new segment here.
+    var onInterruptionEnded: (() -> Void)?
 
     private var videoOutput: AVCaptureMovieFileOutput?
     private var cameraDeviceType: CameraDeviceType = .wide
     private var videoQualityPreset: VideoQualityPreset = .hd720p
+    private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
+    private var observers: [any NSObjectProtocol] = []
 
     /// Resumed by the AVCaptureFileOutputRecordingDelegate once the movie file is finalized.
     private var stopContinuation: CheckedContinuation<URL?, Never>?
@@ -46,21 +80,27 @@ final class VideoRecordingManager: NSObject {
         case .authorized:
             configureCaptureSession(completion: completion)
         case .notDetermined:
+            state = .configuring
             AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
                 Log.video.info("🎥 Camera permission granted: \(granted)")
-                guard granted else { return }
                 Task { @MainActor in
-                    self?.configureCaptureSession(completion: completion)
+                    if granted {
+                        self?.configureCaptureSession(completion: completion)
+                    } else {
+                        self?.fail("Camera access denied")
+                    }
                 }
             }
         default:
-            Log.video.error("❌ Camera access denied (status: \(authStatus.rawValue))")
-            error = "Camera access denied"
+            fail("Camera access denied in Settings")
         }
     }
 
     private func configureCaptureSession(completion: @escaping @Sendable () -> Void) {
+        state = .configuring
         let session = AVCaptureSession()
+        // AudioSessionCoordinator owns the app audio session so announcements keep using the speaker
+        session.automaticallyConfiguresApplicationAudioSession = false
         applyPreset(to: session)
 
         guard let device = preferredCameraDevice() else {
@@ -75,28 +115,34 @@ final class VideoRecordingManager: NSObject {
         addAudioInput(to: session)
 
         let movieOutput = AVCaptureMovieFileOutput()
-        if session.canAddOutput(movieOutput) {
-            session.addOutput(movieOutput)
-            videoOutput = movieOutput
-        } else {
-            Log.video.error("❌ Cannot add movie output to session")
+        guard session.canAddOutput(movieOutput) else {
+            fail("Cannot add movie output to session")
+            return
         }
+        session.addOutput(movieOutput)
+        videoOutput = movieOutput
 
+        rotationCoordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: nil)
+        observe(session)
         captureSession = session
 
         // startRunning() blocks, so run it off the main actor, then let the session settle
         // before telling the caller it is safe to start writing to a file.
-        Task.detached(priority: .userInitiated) {
+        Task.detached(priority: .userInitiated) { [weak self] in
             session.startRunning()
             Log.video.info("✅ Capture session running: \(session.isRunning)")
             try? await Task.sleep(for: .milliseconds(500))
+            await MainActor.run {
+                guard let self, self.captureSession === session else { return }
+                if case .configuring = self.state { self.state = .ready }
+            }
             completion()
         }
     }
 
     private func fail(_ message: String) {
         Log.video.error("❌ \(message)")
-        error = message
+        state = .failed(message)
     }
 
     private func applyPreset(to session: AVCaptureSession) {
@@ -133,11 +179,56 @@ final class VideoRecordingManager: NSObject {
         return AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back)
     }
 
+    // MARK: - Interruptions
+
+    private func observe(_ session: AVCaptureSession) {
+        let center = NotificationCenter.default
+        observers.append(
+            center.addObserver(forName: AVCaptureSession.wasInterruptedNotification, object: session, queue: .main) {
+                [weak self] note in
+                let reason = (note.userInfo?[AVCaptureSessionInterruptionReasonKey] as? Int)
+                    .flatMap(AVCaptureSession.InterruptionReason.init(rawValue:))
+                MainActor.assumeIsolated { self?.sessionInterrupted(reason: reason) }
+            })
+        observers.append(
+            center.addObserver(forName: AVCaptureSession.interruptionEndedNotification, object: session, queue: .main) {
+                [weak self] _ in
+                MainActor.assumeIsolated { self?.sessionInterruptionEnded() }
+            })
+        observers.append(
+            center.addObserver(forName: AVCaptureSession.runtimeErrorNotification, object: session, queue: .main) {
+                [weak self] note in
+                let message =
+                    (note.userInfo?[AVCaptureSessionErrorKey] as? NSError)?.localizedDescription ?? "unknown error"
+                MainActor.assumeIsolated { self?.fail("Camera error: \(message)") }
+            })
+    }
+
+    private func sessionInterrupted(reason: AVCaptureSession.InterruptionReason?) {
+        let text: String
+        switch reason {
+        case .videoDeviceNotAvailableInBackground: text = "the app is in the background or the screen is locked"
+        case .audioDeviceInUseByAnotherClient: text = "the microphone is in use by another app"
+        case .videoDeviceInUseByAnotherClient: text = "the camera is in use by another app"
+        case .videoDeviceNotAvailableWithMultipleForegroundApps: text = "another app is in the foreground"
+        case .videoDeviceNotAvailableDueToSystemPressure: text = "system pressure"
+        default: text = "capture was interrupted"
+        }
+        Log.video.warning("⚠️ Capture interrupted: \(text)")
+        state = .interrupted(text)
+    }
+
+    private func sessionInterruptionEnded() {
+        Log.video.info("✅ Capture interruption ended")
+        if case .interrupted = state { state = .ready }
+        onInterruptionEnded?()
+    }
+
     // MARK: - Recording
 
     func startRecording(to fileURL: URL) {
         guard let output = videoOutput else {
-            Log.video.error("❌ videoOutput is nil, cannot start recording")
+            fail("videoOutput is nil, cannot start recording")
             return
         }
         guard !output.isRecording else {
@@ -145,17 +236,18 @@ final class VideoRecordingManager: NSObject {
             return
         }
 
-        if let connection = output.connection(with: .video) {
-            let rotationAngle = MediaExportService.VideoOrientation.current().rotationAngle
-            if connection.isVideoRotationAngleSupported(rotationAngle) {
-                connection.videoRotationAngle = rotationAngle
-                Log.video.debug("📱 Recording orientation set to angle: \(rotationAngle)")
+        if let connection = output.connection(with: .video), let coordinator = rotationCoordinator {
+            let angle = coordinator.videoRotationAngleForHorizonLevelCapture
+            if connection.isVideoRotationAngleSupported(angle) {
+                connection.videoRotationAngle = angle
+                Log.video.debug("📱 Recording orientation set to angle: \(angle)")
             }
         }
 
+        try? FileManager.default.removeItem(at: fileURL)
         output.startRecording(to: fileURL, recordingDelegate: self)
         currentVideoURL = fileURL
-        Log.video.info("✅ Started recording to: \(fileURL.lastPathComponent)")
+        Log.video.info("🎬 Starting recording to: \(fileURL.lastPathComponent)")
     }
 
     /// Stops the movie file output and suspends until AVFoundation reports the file is finished.
@@ -174,14 +266,34 @@ final class VideoRecordingManager: NSObject {
         }
     }
 
-    private func recordingDidFinish(url: URL?) {
-        let continuation = stopContinuation
-        stopContinuation = nil
-        continuation?.resume(returning: url)
+    private func recordingDidStart(url: URL, at date: Date) {
+        state = .recording
+        onSegmentStarted?(url, date)
+    }
+
+    private func recordingDidFinish(url: URL?, fileURL: URL) {
+        if let continuation = stopContinuation {
+            // Requested stop
+            stopContinuation = nil
+            if case .recording = state { state = .ready }
+            continuation.resume(returning: url)
+            return
+        }
+        // The system ended the file (interruption, disk full, max duration...)
+        if case .interrupted = state {} else { state = .interrupted("recording was stopped by the system") }
+        onSegmentInterrupted?(fileURL)
     }
 
     func stopCaptureSession() {
-        guard let session = captureSession else { return }
+        for observer in observers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        observers = []
+        rotationCoordinator = nil
+        guard let session = captureSession else {
+            state = .idle
+            return
+        }
         Task.detached {
             if session.isRunning {
                 session.stopRunning()
@@ -190,6 +302,7 @@ final class VideoRecordingManager: NSObject {
         }
         captureSession = nil
         videoOutput = nil
+        state = .idle
     }
 }
 
@@ -199,8 +312,12 @@ extension VideoRecordingManager: AVCaptureFileOutputRecordingDelegate {
     nonisolated func fileOutput(
         _ output: AVCaptureFileOutput, didStartRecordingTo fileURL: URL, from connections: [AVCaptureConnection]
     ) {
+        let startedAt = Date()
         Log.video.info(
             "✅ DELEGATE: Recording started to: \(fileURL.lastPathComponent) (\(connections.count) connections)")
+        Task { @MainActor in
+            self.recordingDidStart(url: fileURL, at: startedAt)
+        }
     }
 
     nonisolated func fileOutput(
@@ -221,7 +338,7 @@ extension VideoRecordingManager: AVCaptureFileOutputRecordingDelegate {
             Log.video.info("✅ DELEGATE: Recording finished: \(outputFileURL.lastPathComponent)")
         }
         Task { @MainActor in
-            self.recordingDidFinish(url: finishedURL)
+            self.recordingDidFinish(url: finishedURL, fileURL: outputFileURL)
         }
     }
 }

@@ -273,6 +273,9 @@ nonisolated struct ScoreState: Codable, Sendable {
     var servingPlayer: Int  // 1 or 2 - who is currently serving
     var currentGameFirstServer: Int?  // Who served first in current game
 
+    // Movie files captured for this match (phone-only; not sent to the watch)
+    var recordingSegments: [RecordingSegment]
+
     init(
         playerOneScore: Int = 0,
         playerTwoScore: Int = 0,
@@ -289,7 +292,8 @@ nonisolated struct ScoreState: Codable, Sendable {
         playerOneName: String? = nil,
         playerTwoName: String? = nil,
         servingPlayer: Int = 1,
-        currentGameFirstServer: Int? = nil
+        currentGameFirstServer: Int? = nil,
+        recordingSegments: [RecordingSegment] = []
     ) {
         self.playerOneScore = playerOneScore
         self.playerTwoScore = playerTwoScore
@@ -307,6 +311,28 @@ nonisolated struct ScoreState: Codable, Sendable {
         self.playerTwoName = playerTwoName
         self.servingPlayer = servingPlayer
         self.currentGameFirstServer = currentGameFirstServer
+        self.recordingSegments = recordingSegments
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        playerOneScore = try container.decode(Int.self, forKey: .playerOneScore)
+        playerTwoScore = try container.decode(Int.self, forKey: .playerTwoScore)
+        playerOneGames = try container.decode(Int.self, forKey: .playerOneGames)
+        playerTwoGames = try container.decode(Int.self, forKey: .playerTwoGames)
+        currentMatchGames = try container.decode([GameResult].self, forKey: .currentMatchGames)
+        matchHistory = try container.decode([MatchResult].self, forKey: .matchHistory)
+        currentGamePoints = try container.decode([PointEvent].self, forKey: .currentGamePoints)
+        highlightClips = try container.decode([HighlightClip].self, forKey: .highlightClips)
+        pendingHighlight = try container.decodeIfPresent(HighlightClip.self, forKey: .pendingHighlight)
+        isRecording = try container.decode(Bool.self, forKey: .isRecording)
+        recordingStartTime = try container.decodeIfPresent(Date.self, forKey: .recordingStartTime)
+        currentMatchName = try container.decodeIfPresent(String.self, forKey: .currentMatchName)
+        playerOneName = try container.decodeIfPresent(String.self, forKey: .playerOneName)
+        playerTwoName = try container.decodeIfPresent(String.self, forKey: .playerTwoName)
+        servingPlayer = try container.decode(Int.self, forKey: .servingPlayer)
+        currentGameFirstServer = try container.decodeIfPresent(Int.self, forKey: .currentGameFirstServer)
+        recordingSegments = try container.decodeIfPresent([RecordingSegment].self, forKey: .recordingSegments) ?? []
     }
 
     // MARK: - Computed Properties
@@ -417,6 +443,7 @@ nonisolated struct ScoreState: Codable, Sendable {
         // Highlight clips are only managed on iOS side, not synced via dictionary
         self.highlightClips = []
         self.pendingHighlight = nil
+        self.recordingSegments = []
     }
 
     // MARK: - Factory Methods

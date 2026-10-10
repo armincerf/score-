@@ -17,6 +17,7 @@ nonisolated enum EventType: String, Codable, Sendable {
     case gameEnded
     case matchEnded
     case eventUndone
+    case recordingSegmentStarted  // Camera began writing a (new) movie file
 }
 
 // MARK: - Base Event Protocol
@@ -265,5 +266,35 @@ nonisolated struct EventUndoneEvent: MatchEvent {
         self.sequenceNumber = sequenceNumber
         self.undoneEventId = undoneEventId
         self.reason = reason
+    }
+}
+
+// MARK: - Recording Segment Started
+
+/// The camera started writing a movie file. Several per match when capture is interrupted and resumed.
+nonisolated struct RecordingSegmentStartedEvent: MatchEvent {
+    let id: UUID
+    let matchId: UUID
+    let timestamp: Date
+    let sequenceNumber: Int
+    var eventType: EventType { .recordingSegmentStarted }
+
+    let fileReference: String  // VideoStore reference
+    let startOffset: Double  // Seconds since recordingStartTime when the file began capturing
+
+    init(
+        id: UUID = UUID(),
+        matchId: UUID,
+        timestamp: Date = Date(),
+        sequenceNumber: Int,
+        fileReference: String,
+        startOffset: Double
+    ) {
+        self.id = id
+        self.matchId = matchId
+        self.timestamp = timestamp
+        self.sequenceNumber = sequenceNumber
+        self.fileReference = fileReference
+        self.startOffset = startOffset
     }
 }
