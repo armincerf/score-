@@ -416,7 +416,7 @@ struct WatchCommandTests {
 
         #expect(!deliver(Self.watchCommand("incrementP1", sentAt: lastMatch), via: .userInfo))
         #expect(!deliver(Self.watchCommand("endMatch", sentAt: lastMatch), via: .userInfo))
-        #expect(manager.scoreState.playerOneScore == 0 && !manager.shouldEndMatchFromWatch)
+        #expect(manager.scoreState.playerOneScore == 0 && manager.endMatchRequestCount == 0)
         #expect(try events(matchId).count == 1)
         #expect(deliver(Self.watchCommand("requestSync", sentAt: lastMatch), via: .message))  // always answered
 

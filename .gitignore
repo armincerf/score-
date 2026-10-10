@@ -41,3 +41,6 @@ xcuserdata/
 
 # Serena MCP workspace
 .serena/
+
+# Agent worktrees
+.claude/worktrees/
