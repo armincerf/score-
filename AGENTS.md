@@ -29,6 +29,8 @@ make format       # swift-format + swiftlint --fix
 make check        # lint + build + build-watch + test  (the gate before pushing)
 make setup        # brew tools, git hooks, Apple's Xcode agent skills
 make deploy       # Release build -> connected iPhone (+ paired watch) via devicectl
+make testflight   # archive + upload + wait + send to the "Score testers" group (see TestFlight)
+make testflight-status / make testers / make testflight-export
 ```
 
 Output is filtered through `xcbeautify --quiet`: only errors, warnings and test results are
@@ -77,7 +79,8 @@ score/                      iOS app target
 scorewatch Watch App/       watchOS target (no shared module: ScoreState.swift is a COPY of the phone's)
   ScoreWatchApp.swift, ContentView.swift (3-page TabView: end-game / scoring / highlight), WatchSessionManager.swift, ScoreState.swift, Log.swift
 scoreTests/                 Swift Testing suites (@testable import score)
-scripts/                    xcb.sh (xcodebuild filter), deploy-device.sh (devicectl install), sync-xcode-skills.sh, hooks/
+scripts/                    xcb.sh (xcodebuild filter), deploy-device.sh (devicectl install), sync-xcode-skills.sh, hooks/,
+                            testflight.sh (archive + upload), asc.py (App Store Connect API: testers, distribution)
 .github/workflows/ci.yml    lint (macos-26) + build/test (xcode-27 image)
 ```
 
@@ -168,6 +171,73 @@ from Bash, keep ids 24 hex chars and unique, then verify with
 `plutil -lint score.xcodeproj/project.pbxproj && xcodebuild -list -project score.xcodeproj`
 and a `make build`. Shared schemes live in `score.xcodeproj/xcshareddata/xcschemes/`.
 `xcuserdata` is gitignored.
+
+## TestFlight
+
+`scripts/testflight.sh` archives and uploads; `scripts/asc.py` (Python 3 stdlib +
+`cryptography`, no other packages) talks to the App Store Connect API for everything after
+the upload. Both authenticate with the team's App Store Connect API key, so no Apple ID
+session, local distribution certificate or app-specific password is involved.
+
+**Prerequisites**
+
+- **App Store Connect app record** for `armincerf.score` (one-time, manual: the public API
+  cannot create apps). appstoreconnect.apple.com > Apps > + > New App: iOS, name e.g.
+  "Score", bundle id `armincerf.score`, SKU e.g. `score`. The bundle id is registered (cloud
+  signing did it); if it is ever missing from the list, `make testflight-export` registers it.
+  `make testflight` stops before archiving while the record is missing.
+- **API key** `~/.appstoreconnect/private_keys/AuthKey_8QS8WXLS34.p8`. It never goes in the
+  repo (`*.p8` is gitignored). Defaults: `ASC_KEY_ID=8QS8WXLS34`,
+  `ASC_ISSUER_ID=69a6de79-5ccb-47e3-e053-5b8c7c11a4d1`, `ASC_KEY_PATH` as above; override by env.
+- **App icons**: the upload is refused while the iOS or watch `AppIcon` set has no artwork
+  (App Store Connect rejects such builds); `--no-upload` only warns.
+- **Beta review contact phone**: the first `distribute` needs `ASC_REVIEW_PHONE` (App Store
+  Connect keeps it afterwards). `ASC_REVIEW_FIRST_NAME`/`LAST_NAME`/`EMAIL` default to
+  Alex / Davis / alexanderdavis95@gmail.com; `ASC_FEEDBACK_EMAIL` defaults to the review email.
+- `python3` with `cryptography` (Homebrew's has it; `/usr/bin/python3` does not).
+
+**Steps**
+
+```
+make testflight-export                    # optional: archive + export an .ipa, no upload
+make testers                              # "Score testers" group + testers (idempotent)
+ASC_REVIEW_PHONE='+44 ...' make testflight [VERSION=1.1.0] [NOTES="What to test"]
+make testflight-status                    # app record, latest builds + states, groups
+python3 scripts/asc.py testers            # group members and invite state
+```
+
+`make testflight` = `asc.py preflight` (app record + review phone, read-only) +
+`scripts/testflight.sh` (archive with `-allowProvisioningUpdates`, check the archive, export
+with `destination` upload) + `asc.py wait-build <n>` (polls until `VALID`, 30 min timeout) +
+`asc.py distribute <n>`. If the wait times out, re-run those two
+`asc.py` commands with the printed build number; every step is idempotent.
+
+**Automatic**: build number (UTC `YYYYMMDD.HHMMSS`, both apps), marketing version (the
+project's `MARKETING_VERSION` unless `VERSION=`), bundle id registration, the cloud-managed
+distribution certificate and App Store profiles, symbol upload, archive checks (one app,
+embedded watch app, bundle ids, versions, icons), processing wait, What to Test text, test
+information (beta description, feedback email, review contact and notes), export compliance
+(`ITSAppUsesNonExemptEncryption = NO` in both Info.plists; `distribute` sets
+`usesNonExemptEncryption=false` only if the API reports it unset), adding the build to
+"Score testers", submitting it for beta review, and tester invites (Apple emails them).
+
+**Manual**: creating the app record, icon artwork, the review phone number once, answering a
+beta review rejection, and anything for the App Store itself (screenshots, privacy, release).
+
+**External beta review**: "Score testers" is an *external* group, so testers are invited by
+email and need no App Store Connect account on the team (internal groups do); in exchange,
+Apple reviews a build before the group can install it.
+The first build of each marketing version gets a full review (usually within a day); later
+builds of the same version are usually approved much faster, but each still needs the
+submission that `distribute` creates. Testers get an email invite once a build in the group
+is approved, accept it in the TestFlight app on the iPhone, and the watch app installs from
+the iPhone's Watch app (or automatically). Builds expire after 90 days.
+
+Notes: `testflight.sh` runs xcodebuild with `/usr/bin` first on `PATH` (Homebrew's rsync breaks
+`exportArchive`) and its own DerivedData in `.build/archive/`; logs are
+`.build/logs/testflight-{archive,upload,export}.log` and only their tails are printed on
+failure. `--no-upload` may still reserve the build number on App Store Connect; every run takes
+a new one, so that is harmless.
 
 ## Gotchas
 

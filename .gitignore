@@ -27,6 +27,7 @@ xcuserdata/
 .DS_Store
 
 # Tooling caches
+__pycache__/
 .serena/cache/
 .claude/settings.local.json
 .swiftlint.cache
