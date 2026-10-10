@@ -43,6 +43,20 @@ extension WatchConnectivityManager {
     /// A duplicate is the re-queued copy of a live send that failed; only the taps made in between separate it
     /// from the original, so the last 200 ids is ample.
     private static var recentWatchActionIds = RecentActionIDs(capacity: 200)
+
+    /// How far the watch's `sentAt` may run behind the phone's clock (the watch takes its time from the phone).
+    static let watchClockSkewAllowance: TimeInterval = 2
+
+    /// A command the watch issued before the current match began recording belongs to an earlier match: the watch
+    /// offers its controls only while recording, so this is a tap that waited in the `transferUserInfo` queue (watch
+    /// out of range) while that match ended and this one started. Applied now it would score, or end, this match.
+    /// `requestSync` is always answered; commands without `sentAt` (older watch builds) cannot be told apart.
+    private func isFromEarlierMatch(_ messageData: WatchMessageData) -> Bool {
+        guard let sentAt = messageData.sentAt, messageData.command != "requestSync",
+            let recordingStart = scoreState.recordingStartTime
+        else { return false }
+        return sentAt < recordingStart.timeIntervalSince1970 - Self.watchClockSkewAllowance
+    }
 }
 
 // MARK: - WCSessionDelegate
@@ -126,12 +140,17 @@ extension WatchConnectivityManager: WCSessionDelegate {
     }
 
     /// Entry point for everything the watch delivers. A command whose `actionId` was already applied is dropped
-    /// (the same tap can arrive live and again from the watch's `transferUserInfo` queue); anything else,
-    /// including commands without an id from older watch builds, goes to `handleMessageData`.
-    /// - Returns: false when the message was a duplicate and was dropped.
+    /// (the same tap can arrive live and again from the watch's `transferUserInfo` queue), and so is one issued
+    /// before the current match began (`isFromEarlierMatch`); anything else, including commands without an id
+    /// from older watch builds, goes to `handleMessageData`.
+    /// - Returns: false when the message was dropped as a duplicate or as left over from an earlier match.
     @discardableResult
     func receiveFromWatch(_ messageData: WatchMessageData, via delivery: WatchDelivery) -> Bool {
         let command = messageData.command ?? "-"
+        guard !isFromEarlierMatch(messageData) else {
+            Log.match.info("Dropped watch command \(command) issued before this match began (\(delivery.rawValue))")
+            return false
+        }
         if let actionId = messageData.actionId {
             guard Self.recentWatchActionIds.insert(actionId) else {
                 Log.match.debug("Dropped duplicate watch command \(command) \(actionId) (\(delivery.rawValue))")

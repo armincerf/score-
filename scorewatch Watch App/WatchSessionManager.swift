@@ -151,6 +151,9 @@ final class WatchSessionManager: NSObject {
     private var session: WCSession?
     private var pendingTimer: Timer?
     private var pendingActionId: String?
+    /// The most recent user command handed to WatchConnectivity (live or queued). Only it may be re-queued after a
+    /// failed live send: anything older would reach the phone after a later command.
+    private var lastCommandId: String?
 
     override init() {
         super.init()
@@ -176,6 +179,7 @@ final class WatchSessionManager: NSObject {
             return false
         }
         let command = WatchCommand(name)
+        lastCommandId = command.actionId
         // While earlier commands are still queued, queue behind them so the phone applies taps in order.
         if session.isReachable && session.outstandingUserInfoTransfers.isEmpty {
             if let action {
@@ -217,9 +221,22 @@ final class WatchSessionManager: NSObject {
 
     private func enqueue(_ command: WatchCommand, on session: WCSession) {
         session.transferUserInfo(command.payload)
-        queuedCommandCount = session.outstandingUserInfoTransfers.count
+        refreshQueuedCommandCount()
         Log.session.info(
             "Queued \(command.name.rawValue) until the phone is reachable (\(self.queuedCommandCount) queued)")
+    }
+
+    /// Recounts the outstanding transfers on the main actor, so a `didFinish` computed before a newer `enqueue`
+    /// cannot overwrite the badge with a stale count. `finishedActionId` is the transfer that just completed,
+    /// which may still be listed while its delegate callback runs.
+    private func refreshQueuedCommandCount(excluding finishedActionId: String? = nil) {
+        guard let session else {
+            queuedCommandCount = 0
+            return
+        }
+        queuedCommandCount = session.outstandingUserInfoTransfers.count { transfer in
+            finishedActionId == nil || (transfer.userInfo["actionId"] as? String) != finishedActionId
+        }
     }
 
     /// The phone answers every live command with its full state.
@@ -230,20 +247,31 @@ final class WatchSessionManager: NSObject {
         }
     }
 
-    /// The live send failed, or its reply never came. The phone may still have applied it, so it is queued again
-    /// under the same `actionId`, which the phone drops if it is a duplicate.
+    /// The live send failed: the phone was not reachable after all, delivery failed, or the reply never came (the
+    /// phone may still have applied it). The command is queued again under the same `actionId`, which the phone
+    /// drops if it is a duplicate, but only while a retry is what the user expects:
+    /// - it is still the latest command, so the phone cannot apply it after a later one (a retried End Game
+    ///   arriving after the next game's points would end that game);
+    /// - a score/highlight tap is still pending. Once the 2 s timeout has fired the user has felt the error
+    ///   haptic and may have tapped again, so a late retry would score twice; once the phone's state confirmed
+    ///   it, it was applied.
+    /// A re-queued command is not a failure: like a tap made while unreachable it waits in the queue (badge), and
+    /// an error haptic would only invite a second tap that queues behind it and scores too.
     private func liveSendFailed(_ command: WatchCommand, reason: String) {
         Log.session.error("Sending \(command.name.rawValue) failed: \(reason)")
         guard command.name != .requestSync else { return }
-        if let session {
-            enqueue(command, on: session)
-        }
         let wasPending = pendingActionId == command.actionId
         if wasPending {
             clearPendingState()
         }
-        // A score/highlight action that already timed out has had its error haptic.
-        if wasPending || !command.name.awaitsConfirmation {
+        let isRetryExpected = command.name.awaitsConfirmation ? wasPending : true
+        if isRetryExpected, lastCommandId == command.actionId, let session, session.activationState == .activated {
+            enqueue(command, on: session)
+            return
+        }
+        Log.session.warning("Not retrying \(command.name.rawValue): superseded, timed out or already confirmed")
+        // A tap that timed out has had its error haptic; one the phone confirmed needs none.
+        if isRetryExpected {
             signalFailure()
         }
     }
@@ -348,12 +376,11 @@ extension WatchSessionManager: WCSessionDelegate {
         // The last state the phone pushed. (`applicationContext` is this side's own outgoing context.)
         let context = session.receivedApplicationContext
         let messageData = context.isEmpty ? nil : MessageData(from: context)
-        // Transfers queued by an earlier run of the app are still pending after a relaunch.
-        let queued = session.outstandingUserInfoTransfers.count
 
         Task { @MainActor in
             self.isConnected = isActivated
-            self.queuedCommandCount = queued
+            // Transfers queued by an earlier run of the app are still pending after a relaunch.
+            self.refreshQueuedCommandCount()
             if let messageData {
                 self.handleMessageData(messageData)
             }
@@ -384,10 +411,11 @@ extension WatchSessionManager: WCSessionDelegate {
     ) {
         let remaining = session.outstandingUserInfoTransfers.count { $0 !== userInfoTransfer }
         let command = userInfoTransfer.userInfo["command"] as? String ?? "?"
+        let finishedActionId = userInfoTransfer.userInfo["actionId"] as? String
         let reason = error?.localizedDescription
 
         Task { @MainActor in
-            self.queuedCommandCount = remaining
+            self.refreshQueuedCommandCount(excluding: finishedActionId)
             if reason != nil {
                 self.signalFailure()
             }

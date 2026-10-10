@@ -422,6 +422,29 @@ struct WatchCommandTests {
         #expect(point.player == 2)
     }
 
+    // transferUserInfo keeps a tap queued for as long as the watch is out of range, so it can arrive after its
+    // match ended and the next one started. Applied then, it would score in (or, for endMatch, end) the new match.
+    @Test("A queued command issued before the current match began recording is dropped")
+    func commandFromEarlierMatchIsDropped() throws {
+        let matchId = try startMatch()
+        manager.startRecording()
+        let recordingStart = try #require(manager.scoreState.recordingStartTime)
+        let lastMatch = recordingStart.addingTimeInterval(-60)
+
+        #expect(!deliver(Self.watchCommand("incrementP1", sentAt: lastMatch), via: .userInfo))
+        #expect(!deliver(Self.watchCommand("endMatch", sentAt: lastMatch), via: .userInfo))
+        #expect(manager.scoreState.playerOneScore == 0 && !manager.shouldEndMatchFromWatch)
+        #expect(try events(matchId).count == 1)
+        #expect(deliver(Self.watchCommand("requestSync", sentAt: lastMatch), via: .message))  // always answered
+
+        // Within the clock-skew allowance of the start, and any time after it, commands apply.
+        let skewed = recordingStart.addingTimeInterval(-WatchConnectivityManager.watchClockSkewAllowance / 2)
+        #expect(deliver(Self.watchCommand("incrementP1", sentAt: skewed), via: .userInfo))
+        #expect(deliver(Self.watchCommand("incrementP2"), via: .message))
+        #expect(manager.scoreState.playerOneScore == 1 && manager.scoreState.playerTwoScore == 1)
+        #expect(try events(matchId).count == 3)
+    }
+
     @Test("RecentActionIDs remembers the last `capacity` ids and forgets the oldest first")
     func recentActionIdsAreBounded() {
         var recent = RecentActionIDs(capacity: 3)

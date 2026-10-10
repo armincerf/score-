@@ -83,9 +83,13 @@ scripts/                    xcb.sh (xcodebuild filter), deploy-device.sh (device
   `highlight`, `endGame`, `endMatch`, `requestSync`) as `["command", "actionId" (UUID
   string), "sentAt" (timeIntervalSince1970)]`. Reachable: `WCSession.sendMessage`, whose reply
   is the phone's full `ScoreState.toDictionary()`. Unreachable, or the live send failed:
-  queued with `transferUserInfo` (FIFO, survives app exit); `requestSync` is live-only. The
-  phone applies each `actionId` once across both paths (`receiveFromWatch`, last 200 ids);
-  commands without one (older watch builds) are always applied. `updateApplicationContext`
+  queued with `transferUserInfo` (FIFO, survives app exit); `requestSync` is live-only. A
+  failed live send is re-queued only while it is the latest command and (score/highlight)
+  still pending, so it can neither reorder nor double a re-tap after the timeout. The
+  phone applies each `actionId` once across both paths (`receiveFromWatch`, last 200 ids)
+  and drops commands whose `sentAt` predates the match's `recordingStartTime` (left in the
+  queue from an earlier match); commands without them (older watch builds) are always
+  applied. `updateApplicationContext`
   is phone -> watch only: the phone pushes the full state on every change (`sendScore()`),
   and `highlightConfirmed` immediately after a highlight.
 - **Every scoring action is an event** appended through `EventStore` (sequence-numbered,
