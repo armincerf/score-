@@ -216,10 +216,14 @@ with `destination` upload) + `asc.py wait-build <n>` (polls until `VALID`, 30 mi
 project's `MARKETING_VERSION` unless `VERSION=`), bundle id registration, the cloud-managed
 distribution certificate and App Store profiles, symbol upload, archive checks (one app,
 embedded watch app, bundle ids, versions, icons), processing wait, What to Test text, test
-information (beta description, feedback email, review contact and notes), export compliance
+information (beta description, feedback email, review contact and notes; written in the app
+record's primary language, e.g. en-GB), export compliance
 (`ITSAppUsesNonExemptEncryption = NO` in both Info.plists; `distribute` sets
-`usesNonExemptEncryption=false` only if the API reports it unset), adding the build to
-"Score testers", submitting it for beta review, and tester invites (Apple emails them).
+`usesNonExemptEncryption=false` only if the API reports it unset, then waits up to 10 min for
+the build's external testing state to leave `PROCESSING`/`MISSING_EXPORT_COMPLIANCE`), adding
+the build to "Score testers", submitting it for beta review, and tester invites (Apple emails
+them). A rejected beta review makes `distribute` exit non-zero with a pointer to App Store
+Connect.
 
 **Manual**: creating the app record, icon artwork, the review phone number once, answering a
 beta review rejection, and anything for the App Store itself (screenshots, privacy, release).

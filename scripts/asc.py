@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import http.client
 import json
 import os
 import sys
@@ -54,7 +55,9 @@ KEY_PATH = os.path.expanduser(
     os.environ.get("ASC_KEY_PATH") or f"~/.appstoreconnect/private_keys/AuthKey_{KEY_ID}.p8"
 )
 BUNDLE_ID = os.environ.get("ASC_BUNDLE_ID") or "armincerf.score"
-LOCALE = "en-US"
+# Test information and What to Test go in the app's primary language (the TestFlight page and
+# beta review read that one); en-US only if App Store Connect does not report it.
+FALLBACK_LOCALE = "en-US"
 
 GROUP_NAME = "Score testers"
 # (email, first name, last name); names are optional for the API.
@@ -90,6 +93,12 @@ NO_PHONE = (
 )
 POLL_SECONDS = 30
 FAILED_PROCESSING_STATES = {"FAILED", "INVALID"}
+# Spelled out: wait-build must see PROCESSING, FAILED and INVALID builds, not only VALID ones.
+ALL_PROCESSING_STATES = "PROCESSING,FAILED,INVALID,VALID"
+# External states a freshly VALID build passes through before it can join an external group
+# and be submitted (buildBetaDetail lags the build's processingState by a little).
+EXTERNAL_SETTLING_STATES = {"PROCESSING", "MISSING_EXPORT_COMPLIANCE"}
+EXTERNAL_SETTLE_TIMEOUT = 10 * 60
 # External states in which the build needs no (new) beta review submission.
 REVIEWED_EXTERNAL_STATES = {
     "BETA_APPROVED",
@@ -127,8 +136,12 @@ class Client:
     def __init__(self) -> None:
         if not os.path.isfile(KEY_PATH):
             fail(f"no App Store Connect API key at {KEY_PATH} (set ASC_KEY_PATH)")
-        with open(KEY_PATH, "rb") as fh:
-            key = serialization.load_pem_private_key(fh.read(), password=None)
+        try:
+            with open(KEY_PATH, "rb") as fh:
+                key = serialization.load_pem_private_key(fh.read(), password=None)
+        except (OSError, ValueError, TypeError) as err:
+            # The message names the file and the error type only, never the key material.
+            fail(f"cannot load the App Store Connect API key {KEY_PATH} ({type(err).__name__})")
         if not isinstance(key, ec.EllipticCurvePrivateKey):
             fail(f"{KEY_PATH} is not an EC (ES256) private key")
         self._key = key
@@ -175,8 +188,7 @@ class Client:
                 req.add_header("Content-Type", "application/json")
             try:
                 with urllib.request.urlopen(req, timeout=60) as resp:
-                    raw = resp.read()
-                    return json.loads(raw) if raw else {}
+                    status, raw = resp.status, resp.read()
             except urllib.error.HTTPError as err:
                 raw = err.read()
                 retryable = err.code == 429 or err.code >= 500
@@ -184,11 +196,17 @@ class Client:
                     time.sleep(2 ** (attempt + 1))
                     continue
                 raise AscError(method, shown, err.code, _error_detail(raw)) from None
-            except (urllib.error.URLError, TimeoutError) as err:
+            # URLError, timeouts and resets are OSErrors; a dropped connection mid-response is
+            # an HTTPException (RemoteDisconnected is both). None of them carries the token.
+            except (OSError, http.client.HTTPException) as err:
                 if attempt < 3:
                     time.sleep(2 ** (attempt + 1))
                     continue
-                raise AscError(method, shown, 0, f"network error: {err}") from None
+                raise AscError(method, shown, 0, f"network error: {err!r}") from None
+            try:
+                return json.loads(raw) if raw else {}
+            except ValueError:
+                raise AscError(method, shown, status, "response is not JSON") from None
         raise AssertionError("unreachable")
 
     def get(self, path: str, **params: Any) -> dict[str, Any]:
@@ -271,6 +289,7 @@ def find_build(api: Client, app_id: str, build_number: str) -> dict[str, Any] | 
         **{
             "filter[app]": app_id,
             "filter[version]": build_number,
+            "filter[processingState]": ALL_PROCESSING_STATES,
             "include": "preReleaseVersion",
             "limit": 10,
         },
@@ -326,6 +345,7 @@ def cmd_status(api: Client, args: argparse.Namespace) -> int:
         "/v1/builds",
         **{
             "filter[app]": app["id"],
+            "filter[processingState]": ALL_PROCESSING_STATES,
             "sort": "-uploadedDate",
             "limit": 5,
             "include": "preReleaseVersion,buildBetaDetail",
@@ -501,9 +521,11 @@ def cmd_wait_build(api: Client, args: argparse.Namespace) -> int:
         time.sleep(POLL_SECONDS)
 
 
-def _ensure_whats_new(api: Client, build: dict[str, Any], notes: str | None) -> None:
+def _ensure_whats_new(
+    api: Client, build: dict[str, Any], locale: str, notes: str | None
+) -> None:
     locs = api.get_all(f"/v1/builds/{build['id']}/betaBuildLocalizations", limit=50)
-    loc = next((x for x in locs if x["attributes"].get("locale") == LOCALE), None)
+    loc = next((x for x in locs if x["attributes"].get("locale") == locale), None)
     current = (loc or {}).get("attributes", {}).get("whatsNew") or ""
     wanted = notes if notes else (current or DEFAULT_WHATS_NEW)
     if loc is None:
@@ -512,7 +534,7 @@ def _ensure_whats_new(api: Client, build: dict[str, Any], notes: str | None) -> 
             {
                 "data": {
                     "type": "betaBuildLocalizations",
-                    "attributes": {"locale": LOCALE, "whatsNew": wanted},
+                    "attributes": {"locale": locale, "whatsNew": wanted},
                     "relationships": {"build": {"data": {"type": "builds", "id": build["id"]}}},
                 }
             },
@@ -565,9 +587,11 @@ def _ensure_review_detail(api: Client, app_id: str) -> str:
     return wanted["contactEmail"]
 
 
-def _ensure_beta_app_localization(api: Client, app_id: str, review_email: str) -> None:
+def _ensure_beta_app_localization(
+    api: Client, app_id: str, locale: str, review_email: str
+) -> None:
     locs = api.get_all(f"/v1/apps/{app_id}/betaAppLocalizations", limit=50)
-    loc = next((x for x in locs if x["attributes"].get("locale") == LOCALE), None)
+    loc = next((x for x in locs if x["attributes"].get("locale") == locale), None)
     feedback = os.environ.get("ASC_FEEDBACK_EMAIL") or review_email
     if loc is None:
         api.post(
@@ -576,7 +600,7 @@ def _ensure_beta_app_localization(api: Client, app_id: str, review_email: str) -
                 "data": {
                     "type": "betaAppLocalizations",
                     "attributes": {
-                        "locale": LOCALE,
+                        "locale": locale,
                         "feedbackEmail": feedback,
                         "description": BETA_DESCRIPTION,
                     },
@@ -635,8 +659,29 @@ def _ensure_in_group(api: Client, group: dict[str, Any], build: dict[str, Any]) 
     print(f"  Group {GROUP_NAME!r}: build added")
 
 
-def _ensure_beta_review(api: Client, build: dict[str, Any]) -> str:
-    detail = api.get(f"/v1/builds/{build['id']}/buildBetaDetail")["data"]
+def _settled_beta_detail(api: Client, build: dict[str, Any]) -> dict[str, Any]:
+    """The build's buildBetaDetail once its external state has left PROCESSING and
+    MISSING_EXPORT_COMPLIANCE: right after `VALID` it can still be in either, and App Store
+    Connect refuses to add such a build to an external group or submit it for review."""
+    deadline = time.monotonic() + EXTERNAL_SETTLE_TIMEOUT
+    shown = None
+    while True:
+        detail = api.get(f"/v1/builds/{build['id']}/buildBetaDetail")["data"]
+        external = detail["attributes"].get("externalBuildState")
+        if external not in EXTERNAL_SETTLING_STATES:
+            return detail
+        if external != shown:
+            print(f"  External testing state: {external}; waiting...", flush=True)
+            shown = external
+        if time.monotonic() >= deadline:
+            fail(
+                f"build {build['attributes'].get('version')} is still {external} for external "
+                f"testing after {EXTERNAL_SETTLE_TIMEOUT // 60} min; re-run distribute later"
+            )
+        time.sleep(15)
+
+
+def _ensure_beta_review(api: Client, build: dict[str, Any], detail: dict[str, Any]) -> str:
     if detail["attributes"].get("autoNotifyEnabled") is False:
         api.patch(
             f"/v1/buildBetaDetails/{detail['id']}",
@@ -663,6 +708,11 @@ def _ensure_beta_review(api: Client, build: dict[str, Any]) -> str:
     if external in REVIEWED_EXTERNAL_STATES:
         print(f"  Beta review: not needed (external={external})")
         return external or "?"
+    if external not in (None, "READY_FOR_BETA_SUBMISSION"):
+        fail(
+            f"build {build['attributes'].get('version')} cannot be submitted for beta review: "
+            f"its external testing state is {external} (see App Store Connect > TestFlight)"
+        )
     created = api.post(
         "/v1/betaAppReviewSubmissions",
         {
@@ -690,15 +740,22 @@ def cmd_distribute(api: Client, args: argparse.Namespace) -> int:
         )
     print(f"Distributing {build['_marketing']} ({args.build}) to {GROUP_NAME!r}:")
     # App-level test information first: a missing review phone stops before anything is written.
+    locale = app["attributes"].get("primaryLocale") or FALLBACK_LOCALE
     review_email = _ensure_review_detail(api, app["id"])
-    _ensure_beta_app_localization(api, app["id"], review_email)
+    _ensure_beta_app_localization(api, app["id"], locale, review_email)
     group = ensure_testers(api, app["id"])
-    _ensure_whats_new(api, build, args.notes)
+    _ensure_whats_new(api, build, locale, args.notes)
     _ensure_encryption(api, build)
+    detail = _settled_beta_detail(api, build)
     _ensure_in_group(api, group, build)
-    review = _ensure_beta_review(api, build)
+    review = _ensure_beta_review(api, build, detail)
     if review in ("APPROVED", "BETA_APPROVED", "IN_BETA_TESTING", "READY_FOR_BETA_TESTING"):
         print("Done: testers in the group can install this build from TestFlight.")
+    elif review == "REJECTED":
+        fail(
+            f"Apple rejected the beta review of build {args.build}: read the reason in App Store "
+            "Connect > TestFlight, fix it and upload a new build"
+        )
     else:
         print(
             "Done: the build reaches testers when Apple approves the beta review "
