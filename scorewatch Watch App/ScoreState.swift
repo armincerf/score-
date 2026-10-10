@@ -11,13 +11,16 @@ import Foundation
 // MARK: - Point Event (for video timestamp tracking)
 
 nonisolated struct PointEvent: Codable, Sendable {
-    let player: Int              // 1 or 2
-    let timestamp: Date          // When point was scored
-    var isHighlight: Bool        // Was this marked as a highlight?
+    let player: Int  // 1 or 2
+    let timestamp: Date  // When point was scored
+    var isHighlight: Bool  // Was this marked as a highlight?
     let videoTimestamp: Double?  // Seconds from video start (set by iOS only)
-    var wasServing: Bool         // Was the scoring player serving?
+    var wasServing: Bool  // Was the scoring player serving?
 
-    init(player: Int, timestamp: Date = Date(), isHighlight: Bool = false, videoTimestamp: Double? = nil, wasServing: Bool = false) {
+    init(
+        player: Int, timestamp: Date = Date(), isHighlight: Bool = false, videoTimestamp: Double? = nil,
+        wasServing: Bool = false
+    ) {
         self.player = player
         self.timestamp = timestamp
         self.isHighlight = isHighlight
@@ -31,12 +34,15 @@ nonisolated struct PointEvent: Codable, Sendable {
 nonisolated struct GameResult: Codable, Sendable {
     let playerOneScore: Int
     let playerTwoScore: Int
-    let winner: Int // 1 or 2
+    let winner: Int  // 1 or 2
     let timestamp: Date
     let points: [PointEvent]  // All points scored in this game
     let firstServer: Int  // Who served first in this game (1 or 2)
 
-    init(playerOneScore: Int, playerTwoScore: Int, winner: Int, timestamp: Date = Date(), points: [PointEvent] = [], firstServer: Int = 1) {
+    init(
+        playerOneScore: Int, playerTwoScore: Int, winner: Int, timestamp: Date = Date(), points: [PointEvent] = [],
+        firstServer: Int = 1
+    ) {
         self.playerOneScore = playerOneScore
         self.playerTwoScore = playerTwoScore
         self.winner = winner
@@ -51,12 +57,15 @@ nonisolated struct GameResult: Codable, Sendable {
 nonisolated struct MatchResult: Codable, Sendable {
     let playerOneGames: Int
     let playerTwoGames: Int
-    let winner: Int // 1 or 2
+    let winner: Int  // 1 or 2
     let games: [GameResult]
     let timestamp: Date
     let highlightVideoURL: String?  // Path to generated highlight reel
 
-    init(playerOneGames: Int, playerTwoGames: Int, winner: Int, games: [GameResult], timestamp: Date = Date(), highlightVideoURL: String? = nil) {
+    init(
+        playerOneGames: Int, playerTwoGames: Int, winner: Int, games: [GameResult], timestamp: Date = Date(),
+        highlightVideoURL: String? = nil
+    ) {
         self.playerOneGames = playerOneGames
         self.playerTwoGames = playerTwoGames
         self.winner = winner
@@ -146,7 +155,7 @@ nonisolated struct ScoreState: Codable, Sendable {
             "playerOneGames": playerOneGames,
             "playerTwoGames": playerTwoGames,
             "isRecording": isRecording,
-            "servingPlayer": servingPlayer
+            "servingPlayer": servingPlayer,
         ]
 
         // Encode complex types to Data

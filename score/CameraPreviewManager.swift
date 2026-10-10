@@ -5,16 +5,18 @@
 //  Manages camera preview session with lens switching and quality adjustment
 //
 
-import Foundation
 @preconcurrency import AVFoundation
+import Foundation
+import Observation
+import SwiftUI
 import UIKit
-import Combine
 import os
 
 @MainActor
-class CameraPreviewManager: NSObject, ObservableObject {
-    @Published var session = AVCaptureSession()
-    @Published var availableDeviceTypes: [AVCaptureDevice.DeviceType] = []
+@Observable
+class CameraPreviewManager: NSObject {
+    var session = AVCaptureSession()
+    var availableDeviceTypes: [AVCaptureDevice.DeviceType] = []
 
     private var currentDevice: AVCaptureDevice?
     private var currentInput: AVCaptureDeviceInput?
@@ -36,7 +38,7 @@ class CameraPreviewManager: NSObject, ObservableObject {
             .builtInDualCamera,
             .builtInUltraWideCamera,
             .builtInWideAngleCamera,
-            .builtInTelephotoCamera
+            .builtInTelephotoCamera,
         ]
 
         let discoverySession = AVCaptureDevice.DiscoverySession(
@@ -45,7 +47,7 @@ class CameraPreviewManager: NSObject, ObservableObject {
             position: .back
         )
 
-        availableDeviceTypes = discoverySession.devices.map { $0.deviceType }
+        availableDeviceTypes = discoverySession.devices.map(\.deviceType)
         Log.video.debug("Available device types: \(self.availableDeviceTypes.map { "\($0.rawValue)" })")
     }
 
@@ -101,7 +103,7 @@ class CameraPreviewManager: NSObject, ObservableObject {
         session.beginConfiguration()
 
         // Remove existing input
-        if let currentInput = currentInput {
+        if let currentInput {
             session.removeInput(currentInput)
         }
 
@@ -139,10 +141,8 @@ class CameraPreviewManager: NSObject, ObservableObject {
 
 // MARK: - SwiftUI Representable
 
-import SwiftUI
-
 struct CameraPreviewRepresentable: UIViewRepresentable {
-    @ObservedObject var manager: CameraPreviewManager
+    let manager: CameraPreviewManager
 
     func makeUIView(context: Context) -> CameraPreviewUIView {
         let view = CameraPreviewUIView()
@@ -169,6 +169,8 @@ class CameraPreviewUIView: UIView {
     }
 
     var previewLayer: AVCaptureVideoPreviewLayer {
+        // layerClass guarantees the backing layer type
+        // swiftlint:disable:next force_cast
         return layer as! AVCaptureVideoPreviewLayer
     }
 

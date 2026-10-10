@@ -5,15 +5,15 @@
 //  Camera configuration with live preview, lens selection, and quality settings
 //
 
-import SwiftUI
 import AVFoundation
 import SwiftData
+import SwiftUI
 import os
 
 struct CameraSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
-    @StateObject private var cameraManager = CameraPreviewManager()
+    @State private var cameraManager = CameraPreviewManager()
     @State private var preferences: UserPreferences?
     @State private var cameraEnabled: Bool = true
     @State private var selectedDeviceType: CameraDeviceType = .wide
@@ -38,9 +38,12 @@ struct CameraSettingsView: View {
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text("Video Recording")
                                         .font(.headline)
-                                    Text(cameraEnabled ? "Recording enabled for matches" : "Scoring only, no video recording")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
+                                    Text(
+                                        cameraEnabled
+                                            ? "Recording enabled for matches" : "Scoring only, no video recording"
+                                    )
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
                                 }
                             }
                         }
@@ -116,7 +119,10 @@ struct CameraSettingsView: View {
 
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 12) {
-                                ForEach(CameraDeviceType.allAvailableCases(for: cameraManager.availableDeviceTypes), id: \.self) { deviceType in
+                                ForEach(
+                                    CameraDeviceType.allAvailableCases(for: cameraManager.availableDeviceTypes),
+                                    id: \.self
+                                ) { deviceType in
                                     CameraLensCard(
                                         deviceType: deviceType,
                                         isSelected: selectedDeviceType == deviceType
@@ -163,9 +169,14 @@ struct CameraSettingsView: View {
                             .font(.caption)
                             .foregroundColor(.secondary)
 
-                        Text("Choose the camera lens and quality that best suits your recording environment. Higher quality settings may produce larger files but better video clarity.")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                        Text(
+                            """
+                            Choose the camera lens and quality that best suits your recording environment. \
+                            Higher quality settings may produce larger files but better video clarity.
+                            """
+                        )
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                     }
                     .padding()
                     .background(Color.secondary.opacity(0.1))
@@ -297,11 +308,11 @@ struct QualityPresetRow: View {
 // MARK: - Camera Device Type Enum
 
 enum CameraDeviceType: String, CaseIterable {
-    case wide = "wide"
-    case ultraWide = "ultraWide"
-    case telephoto = "telephoto"
-    case dual = "dual"
-    case triple = "triple"
+    case wide
+    case ultraWide
+    case telephoto
+    case dual
+    case triple
 
     var displayName: String {
         switch self {
@@ -371,12 +382,12 @@ enum CameraDeviceType: String, CaseIterable {
 // MARK: - Video Quality Preset Enum
 
 enum VideoQualityPreset: String, CaseIterable {
-    case low = "low"
-    case medium = "medium"
-    case high = "high"
-    case hd720p = "hd720p"
-    case hd1080p = "hd1080p"
-    case hd4K = "hd4K"
+    case low
+    case medium
+    case high
+    case hd720p
+    case hd1080p
+    case hd4K
 
     var displayName: String {
         switch self {

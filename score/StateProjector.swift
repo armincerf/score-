@@ -8,165 +8,155 @@
 import Foundation
 
 class StateProjector {
+    /// Scratch state carried through one replay of a match's events.
+    private struct Replay {
+        var state = ScoreState()
+        var currentGamePoints: [PointEvent] = []
+        var pointTimestamps: [Double] = []  // Point video timestamps, for highlight start times
+        var pendingHighlights: [UUID: HighlightMarkedEvent] = [:]
+        var highlightClips: [HighlightClip] = []
+    }
+
     // MARK: - Full State Projection
 
     /// Rebuild complete ScoreState from all events in a match
     func project(events: [StoredMatchEvent], matchMetadata: StoredMatch) throws -> ScoreState {
-        var state = ScoreState()
-        var currentGameNumber = 0
-        var currentGamePoints: [PointEvent] = []
-        var pointTimestamps: [Double] = []  // Track point timestamps for highlight start times
-
-        // Track pending highlights and their attributions
-        var pendingHighlights: [UUID: HighlightMarkedEvent] = [:]
-        var highlightClips: [HighlightClip] = []
-
-        // Replay events in sequence order
+        var replay = Replay()
         for storedEvent in events where !storedEvent.isUndone {
-            switch storedEvent.eventType {
-            case EventType.matchStarted.rawValue:
-                let event = try JSONDecoder().decode(MatchStartedEvent.self, from: storedEvent.eventData)
-                state.currentMatchName = event.matchName
-                state.playerOneName = event.playerOneName
-                state.playerTwoName = event.playerTwoName
-                state.isRecording = true
-                state.recordingStartTime = event.recordingStartTime
+            try apply(storedEvent, to: &replay)
+        }
+        replay.state.currentGamePoints = replay.currentGamePoints
+        replay.state.highlightClips = replay.highlightClips
+        return replay.state
+    }
 
-                // Use the persisted initial server from the event (ensures replay consistency)
-                state.servingPlayer = event.initialServer
-                state.currentGameFirstServer = event.initialServer
+    private func apply(_ storedEvent: StoredMatchEvent, to replay: inout Replay) throws {
+        let decoder = JSONDecoder()
+        switch EventType(rawValue: storedEvent.eventType) {
+        case .matchStarted:
+            apply(try decoder.decode(MatchStartedEvent.self, from: storedEvent.eventData), to: &replay)
+        case .pointScored:
+            apply(try decoder.decode(PointScoredEvent.self, from: storedEvent.eventData), to: &replay)
+        case .highlightMarked:
+            apply(try decoder.decode(HighlightMarkedEvent.self, from: storedEvent.eventData), to: &replay)
+        case .highlightAttributed:
+            apply(try decoder.decode(HighlightAttributedEvent.self, from: storedEvent.eventData), to: &replay)
+        case .gameEnded:
+            apply(try decoder.decode(GameEndedEvent.self, from: storedEvent.eventData), to: &replay)
+        case .matchEnded:
+            replay.state.isRecording = false
+        case .eventUndone, .none:
+            break  // Undo markers and unknown types carry no state
+        }
+    }
 
-            case EventType.pointScored.rawValue:
-                let event = try JSONDecoder().decode(PointScoredEvent.self, from: storedEvent.eventData)
+    private func apply(_ event: MatchStartedEvent, to replay: inout Replay) {
+        replay.state.currentMatchName = event.matchName
+        replay.state.playerOneName = event.playerOneName
+        replay.state.playerTwoName = event.playerTwoName
+        replay.state.isRecording = true
+        replay.state.recordingStartTime = event.recordingStartTime
+        // Use the persisted initial server from the event (ensures replay consistency)
+        replay.state.servingPlayer = event.initialServer
+        replay.state.currentGameFirstServer = event.initialServer
+    }
 
-                // Update score
-                if event.player == 1 {
-                    state.playerOneScore += 1
-                } else {
-                    state.playerTwoScore += 1
-                }
+    private func apply(_ event: PointScoredEvent, to replay: inout Replay) {
+        // Check if point was won on serve (before updating score)
+        let wasServing = ServingLogic.wasPointScoredOnServe(
+            scoringPlayer: event.player,
+            servingPlayer: replay.state.servingPlayer
+        )
 
-                // Track point timestamp
-                if let videoTimestamp = event.videoTimestamp {
-                    pointTimestamps.append(videoTimestamp)
-                }
-
-                // Check if point was won on serve (before updating score)
-                let wasServing = ServingLogic.wasPointScoredOnServe(
-                    scoringPlayer: event.player,
-                    servingPlayer: state.servingPlayer
-                )
-
-                // Create point event
-                let pointEvent = PointEvent(
-                    player: event.player,
-                    timestamp: event.timestamp,
-                    isHighlight: false,
-                    videoTimestamp: event.videoTimestamp,
-                    wasServing: wasServing
-                )
-
-                currentGamePoints.append(pointEvent)
-
-                // Recalculate current server based on new score
-                state.servingPlayer = ServingLogic.calculateCurrentServer(
-                    firstServer: state.currentGameFirstServer ?? 1,
-                    playerOneScore: state.playerOneScore,
-                    playerTwoScore: state.playerTwoScore
-                )
-
-            case EventType.highlightMarked.rawValue:
-                let event = try JSONDecoder().decode(HighlightMarkedEvent.self, from: storedEvent.eventData)
-
-                // Calculate start timestamp (last scored point before this highlight)
-                let lastPointTimestamp = pointTimestamps.last ?? 0
-
-                // Create pending highlight clip
-                let clip = HighlightClip(
-                    id: event.id,
-                    startTimestamp: lastPointTimestamp,
-                    endTimestamp: event.videoTimestamp,
-                    player: event.player,
-                    gameNumber: event.gameNumber
-                )
-
-                if event.player != nil {
-                    // Already attributed (legacy or immediate attribution)
-                    highlightClips.append(clip)
-                } else {
-                    // Store as pending
-                    pendingHighlights[event.id] = event
-                    state.pendingHighlight = clip
-                }
-
-            case EventType.highlightAttributed.rawValue:
-                let event = try JSONDecoder().decode(HighlightAttributedEvent.self, from: storedEvent.eventData)
-
-                // Find the pending highlight and attribute it
-                if let pendingEvent = pendingHighlights[event.highlightEventId] {
-                    let lastPointTimestamp = pointTimestamps.filter { $0 < pendingEvent.videoTimestamp }.last ?? 0
-
-                    let attributedClip = HighlightClip(
-                        id: pendingEvent.id,
-                        startTimestamp: lastPointTimestamp,
-                        endTimestamp: pendingEvent.videoTimestamp,
-                        player: event.player,
-                        gameNumber: pendingEvent.gameNumber
-                    )
-                    highlightClips.append(attributedClip)
-                    pendingHighlights.removeValue(forKey: event.highlightEventId)
-                    state.pendingHighlight = nil
-                }
-
-            case EventType.gameEnded.rawValue:
-                let event = try JSONDecoder().decode(GameEndedEvent.self, from: storedEvent.eventData)
-
-                // Create game result
-                let game = GameResult(
-                    playerOneScore: event.playerOneScore,
-                    playerTwoScore: event.playerTwoScore,
-                    winner: event.winner,
-                    timestamp: event.timestamp,
-                    points: currentGamePoints,
-                    duration: event.gameDuration,
-                    firstServer: state.currentGameFirstServer ?? 1
-                )
-                state.currentMatchGames.append(game)
-
-                // Update games won
-                if event.winner == 1 {
-                    state.playerOneGames += 1
-                } else {
-                    state.playerTwoGames += 1
-                }
-
-                // Determine first server for next game (alternate from current game)
-                if let firstServerThisGame = state.currentGameFirstServer {
-                    state.currentGameFirstServer = (firstServerThisGame == 1) ? 2 : 1
-                    state.servingPlayer = state.currentGameFirstServer!
-                }
-
-                // Reset for next game
-                state.playerOneScore = 0
-                state.playerTwoScore = 0
-                currentGamePoints = []
-                currentGameNumber += 1
-
-            case EventType.matchEnded.rawValue:
-                _ = try JSONDecoder().decode(MatchEndedEvent.self, from: storedEvent.eventData)
-                state.isRecording = false
-
-            default:
-                // EventUndone or unknown types - skip
-                break
-            }
+        if event.player == 1 {
+            replay.state.playerOneScore += 1
+        } else {
+            replay.state.playerTwoScore += 1
         }
 
-        // Set current game points and highlight clips
-        state.currentGamePoints = currentGamePoints
-        state.highlightClips = highlightClips
+        if let videoTimestamp = event.videoTimestamp {
+            replay.pointTimestamps.append(videoTimestamp)
+        }
 
-        return state
+        replay.currentGamePoints.append(
+            PointEvent(
+                player: event.player,
+                timestamp: event.timestamp,
+                isHighlight: false,
+                videoTimestamp: event.videoTimestamp,
+                wasServing: wasServing
+            )
+        )
+
+        replay.state.servingPlayer = ServingLogic.calculateCurrentServer(
+            firstServer: replay.state.currentGameFirstServer ?? 1,
+            playerOneScore: replay.state.playerOneScore,
+            playerTwoScore: replay.state.playerTwoScore
+        )
+    }
+
+    private func apply(_ event: HighlightMarkedEvent, to replay: inout Replay) {
+        // The clip starts at the last scored point before the highlight was marked
+        let clip = HighlightClip(
+            id: event.id,
+            startTimestamp: replay.pointTimestamps.last ?? 0,
+            endTimestamp: event.videoTimestamp,
+            player: event.player,
+            gameNumber: event.gameNumber
+        )
+        if event.player != nil {
+            replay.highlightClips.append(clip)  // Already attributed
+        } else {
+            replay.pendingHighlights[event.id] = event
+            replay.state.pendingHighlight = clip
+        }
+    }
+
+    private func apply(_ event: HighlightAttributedEvent, to replay: inout Replay) {
+        guard let pendingEvent = replay.pendingHighlights[event.highlightEventId] else { return }
+        let lastPointTimestamp = replay.pointTimestamps.last(where: { $0 < pendingEvent.videoTimestamp }) ?? 0
+        replay.highlightClips.append(
+            HighlightClip(
+                id: pendingEvent.id,
+                startTimestamp: lastPointTimestamp,
+                endTimestamp: pendingEvent.videoTimestamp,
+                player: event.player,
+                gameNumber: pendingEvent.gameNumber
+            )
+        )
+        replay.pendingHighlights.removeValue(forKey: event.highlightEventId)
+        replay.state.pendingHighlight = nil
+    }
+
+    private func apply(_ event: GameEndedEvent, to replay: inout Replay) {
+        replay.state.currentMatchGames.append(
+            GameResult(
+                playerOneScore: event.playerOneScore,
+                playerTwoScore: event.playerTwoScore,
+                winner: event.winner,
+                timestamp: event.timestamp,
+                points: replay.currentGamePoints,
+                duration: event.gameDuration,
+                firstServer: replay.state.currentGameFirstServer ?? 1
+            )
+        )
+
+        if event.winner == 1 {
+            replay.state.playerOneGames += 1
+        } else {
+            replay.state.playerTwoGames += 1
+        }
+
+        // First server alternates between games
+        if let firstServerThisGame = replay.state.currentGameFirstServer {
+            let nextServer = firstServerThisGame == 1 ? 2 : 1
+            replay.state.currentGameFirstServer = nextServer
+            replay.state.servingPlayer = nextServer
+        }
+
+        replay.state.playerOneScore = 0
+        replay.state.playerTwoScore = 0
+        replay.currentGamePoints = []
     }
 
     // MARK: - Current Game Projection (Optimized)
@@ -225,9 +215,11 @@ class StateProjector {
 
         // Find last PointScored that's not undone
         let currentGameEvents = events[startIndex...]
-        guard let lastPointEvent = currentGameEvents
-            .reversed()
-            .first(where: { $0.eventType == EventType.pointScored.rawValue && !$0.isUndone })
+        guard
+            let lastPointEvent =
+                currentGameEvents
+                .reversed()
+                .first(where: { $0.eventType == EventType.pointScored.rawValue && !$0.isUndone })
         else {
             return nil
         }

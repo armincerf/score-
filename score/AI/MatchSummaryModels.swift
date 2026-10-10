@@ -14,16 +14,16 @@ import FoundationModels
 struct MatchSummary {
     @Guide(description: "A catchy headline for the match result in 5-10 words")
     var headline: String
-    
+
     @Guide(description: "A 2-3 sentence narrative summary of how the match unfolded")
     var narrative: String
-    
+
     @Guide(description: "Key performance insights about the winner")
     var winnerInsights: String
-    
+
     @Guide(description: "Notable moments or turning points in the match")
     var keyMoments: String
-    
+
     @Guide(description: "Fun or interesting observation about the match")
     var funFact: String
 }
@@ -34,10 +34,10 @@ struct MatchSummary {
 struct RivalryAnalysis {
     @Guide(description: "Description of the overall rivalry and who dominates")
     var rivalryOverview: String
-    
+
     @Guide(description: "Trend observation about recent matches")
     var recentTrend: String
-    
+
     @Guide(description: "Prediction or commentary for future matches")
     var lookAhead: String
 }
@@ -110,34 +110,34 @@ struct MatchContext {
     let games: [GameResult]
     let duration: TimeInterval?
     let previousMatches: [MatchResult]
-    
+
     var winnerName: String {
         winner == 1 ? playerOneName : playerTwoName
     }
-    
+
     var loserName: String {
         winner == 1 ? playerTwoName : playerOneName
     }
-    
+
     var winnerGames: Int {
         winner == 1 ? playerOneGames : playerTwoGames
     }
-    
+
     var loserGames: Int {
         winner == 1 ? playerTwoGames : playerOneGames
     }
-    
+
     func buildPrompt() -> String {
         var prompt = """
-        Generate a match summary for this table tennis match:
-        
-        Players: \(playerOneName) vs \(playerTwoName)
-        Final Score: \(playerOneName) \(playerOneGames) - \(playerTwoGames) \(playerTwoName)
-        Winner: \(winnerName)
-        
-        Game-by-game breakdown:
-        """
-        
+            Generate a match summary for this table tennis match:
+
+            Players: \(playerOneName) vs \(playerTwoName)
+            Final Score: \(playerOneName) \(playerOneGames) - \(playerTwoGames) \(playerTwoName)
+            Winner: \(winnerName)
+
+            Game-by-game breakdown:
+            """
+
         for (index, game) in games.enumerated() {
             let gameWinner = game.winner == 1 ? playerOneName : playerTwoName
             prompt += "\nGame \(index + 1): \(game.playerOneScore)-\(game.playerTwoScore) (\(gameWinner) wins)"
@@ -145,30 +145,31 @@ struct MatchContext {
                 prompt += " - Duration: \(formatDuration(gameDuration))"
             }
         }
-        
+
         if let matchDuration = duration {
             prompt += "\n\nTotal match duration: \(formatDuration(matchDuration))"
         }
-        
+
         if !previousMatches.isEmpty {
             prompt += "\n\nPrevious matches between these players:"
             var p1Wins = 0
             var p2Wins = 0
-            
+
             for match in previousMatches.suffix(5) {
                 let prevWinner = match.winner == 1 ? playerOneName : playerTwoName
-                prompt += "\n- \(playerOneName) \(match.playerOneGames)-\(match.playerTwoGames) \(playerTwoName) (Winner: \(prevWinner))"
+                prompt +=
+                    "\n- \(playerOneName) \(match.playerOneGames)-\(match.playerTwoGames) \(playerTwoName) (Winner: \(prevWinner))"
                 if match.winner == 1 { p1Wins += 1 } else { p2Wins += 1 }
             }
-            
+
             prompt += "\n\nHead-to-head record: \(playerOneName) \(p1Wins) - \(p2Wins) \(playerTwoName)"
         } else {
             prompt += "\n\nThis is the first recorded match between these players."
         }
-        
+
         return prompt
     }
-    
+
     private func formatDuration(_ duration: TimeInterval) -> String {
         let minutes = Int(duration) / 60
         let seconds = Int(duration) % 60

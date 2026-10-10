@@ -5,11 +5,11 @@
 //  Home screen with Start New Game and Match History options
 //
 
-import SwiftUI
 import SwiftData
+import SwiftUI
 
 struct HomeView: View {
-    @EnvironmentObject var connectivity: WatchConnectivityManager
+    @Environment(WatchConnectivityManager.self) private var connectivity
     @Environment(\.modelContext) private var modelContext
     @State private var showingNameSheet = false
     @State private var showingGame = false
@@ -70,81 +70,83 @@ struct HomeView: View {
 
                     Spacer()
 
-                // Main actions
-                GlassEffectContainer(spacing: 16) {
-                    // Resume match button if there's an active recording
-                    if connectivity.isRecording {
-                        Button {
-                            showingGame = true
-                        } label: {
-                            HStack {
-                                Image(systemName: "play.fill")
-                                    .font(.title2)
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("Resume Match")
-                                        .font(.headline)
-                                    Text("\(connectivity.scoreState.playerOneGames)-\(connectivity.scoreState.playerTwoGames)")
+                    // Main actions
+                    GlassEffectContainer(spacing: 16) {
+                        // Resume match button if there's an active recording
+                        if connectivity.isRecording {
+                            Button {
+                                showingGame = true
+                            } label: {
+                                HStack {
+                                    Image(systemName: "play.fill")
+                                        .font(.title2)
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text("Resume Match")
+                                            .font(.headline)
+                                        Text(
+                                            "\(connectivity.scoreState.playerOneGames)-\(connectivity.scoreState.playerTwoGames)"
+                                        )
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
                                 }
-                                Spacer()
+                                .padding()
+                                .glassEffect(.regular.tint(.orange).interactive(), in: .rect(cornerRadius: 16))
                             }
+                            .buttonStyle(.plain)
+                        }
+
+                        // Start New Game
+                        Button {
+                            handleStartNewGame()
+                        } label: {
+                            HStack {
+                                Image(systemName: "plus.circle.fill")
+                                    .font(.title2)
+                                Text("Start New Game")
+                                    .font(.title3)
+                                    .bold()
+                            }
+                            .frame(maxWidth: .infinity)
                             .padding()
-                            .glassEffect(.regular.tint(.orange).interactive(), in: .rect(cornerRadius: 16))
+                            .glassEffect(.regular.tint(.green).interactive(), in: .rect(cornerRadius: 16))
+                        }
+                        .buttonStyle(.plain)
+
+                        // Match History
+                        NavigationLink(destination: MatchHistoryView()) {
+                            HStack {
+                                Image(systemName: "list.bullet.clipboard")
+                                    .font(.title2)
+                                Text("Match History")
+                                    .font(.title3)
+                                    .bold()
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .glassEffect(.regular.tint(.blue).interactive(), in: .rect(cornerRadius: 16))
+                        }
+                        .buttonStyle(.plain)
+
+                        // Camera Settings
+                        Button {
+                            showingSettings = true
+                        } label: {
+                            HStack {
+                                Image(systemName: "camera.circle.fill")
+                                    .font(.title2)
+                                Text("Camera Settings")
+                                    .font(.title3)
+                                    .bold()
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .glassEffect(.regular.tint(.purple).interactive(), in: .rect(cornerRadius: 16))
                         }
                         .buttonStyle(.plain)
                     }
-
-                    // Start New Game
-                    Button {
-                        handleStartNewGame()
-                    } label: {
-                        HStack {
-                            Image(systemName: "plus.circle.fill")
-                                .font(.title2)
-                            Text("Start New Game")
-                                .font(.title3)
-                                .bold()
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .glassEffect(.regular.tint(.green).interactive(), in: .rect(cornerRadius: 16))
-                    }
-                    .buttonStyle(.plain)
-
-                    // Match History
-                    NavigationLink(destination: MatchHistoryView()) {
-                        HStack {
-                            Image(systemName: "list.bullet.clipboard")
-                                .font(.title2)
-                            Text("Match History")
-                                .font(.title3)
-                                .bold()
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .glassEffect(.regular.tint(.blue).interactive(), in: .rect(cornerRadius: 16))
-                    }
-                    .buttonStyle(.plain)
-
-                    // Camera Settings
-                    Button {
-                        showingSettings = true
-                    } label: {
-                        HStack {
-                            Image(systemName: "camera.circle.fill")
-                                .font(.title2)
-                            Text("Camera Settings")
-                                .font(.title3)
-                                .bold()
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .glassEffect(.regular.tint(.purple).interactive(), in: .rect(cornerRadius: 16))
-                    }
-                    .buttonStyle(.plain)
-                }
-                .padding(.horizontal, 32)
+                    .padding(.horizontal, 32)
 
                     Spacer()
 
@@ -179,7 +181,7 @@ struct HomeView: View {
                 CameraSettingsView()
             }
             .alert("Active Match in Progress", isPresented: $showingActiveMatchAlert) {
-                Button("Cancel", role: .cancel) { }
+                Button("Cancel", role: .cancel) {}
                 Button("Save & Start New") {
                     Task {
                         await saveAndStartNew()
@@ -263,8 +265,8 @@ struct MatchNameSheet: View {
     }
 
     private var canStart: Bool {
-        !player1Name.trimmingCharacters(in: .whitespaces).isEmpty &&
-        !player2Name.trimmingCharacters(in: .whitespaces).isEmpty
+        !player1Name.trimmingCharacters(in: .whitespaces).isEmpty
+            && !player2Name.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
     var body: some View {
@@ -388,19 +390,8 @@ struct MatchNameSheet: View {
 }
 
 #Preview {
-    let container = try! ModelContainer(for: StoredMatch.self, StoredMatchEvent.self, UserPreferences.self)
-    let context = container.mainContext
-    let eventStore = EventStore(modelContext: context)
-    let stateProjector = StateProjector()
-    let undoService = UndoService(eventStore: eventStore, stateProjector: stateProjector)
-    let connectivity = WatchConnectivityManager(
-        eventStore: eventStore,
-        stateProjector: stateProjector,
-        undoService: undoService,
-        modelContext: context
-    )
-
-    return HomeView()
-        .environmentObject(connectivity)
-        .modelContainer(container)
+    let fixture = PreviewSupport.makeFixture()
+    HomeView()
+        .environment(fixture.connectivity)
+        .modelContainer(fixture.container)
 }

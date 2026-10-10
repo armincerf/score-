@@ -5,22 +5,23 @@
 //  Text-to-speech announcer for score changes
 //
 
-import Foundation
 @preconcurrency import AVFoundation
-import Combine
+import Foundation
+import Observation
 import os
 
 @MainActor
-class ScoreAnnouncer: NSObject, ObservableObject {
+@Observable
+class ScoreAnnouncer: NSObject {
     private let synthesizer = AVSpeechSynthesizer()
-    @Published var isEnabled = true
-    
+    var isEnabled = true
+
     override init() {
         super.init()
         synthesizer.delegate = self
         configureAudioSession()
     }
-    
+
     private func configureAudioSession() {
         do {
             let audioSession = AVAudioSession.sharedInstance()
@@ -30,7 +31,7 @@ class ScoreAnnouncer: NSObject, ObservableObject {
             Log.audio.error("Failed to configure audio session: \(error)")
         }
     }
-    
+
     func announceScore(
         playerOneScore: Int,
         playerTwoScore: Int,
@@ -70,23 +71,25 @@ class ScoreAnnouncer: NSObject, ObservableObject {
 
         speak(text)
     }
-    
+
     private func speak(_ text: String) {
         synthesizer.stopSpeaking(at: .immediate)
-        
+
         let utterance = AVSpeechUtterance(string: text)
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate * 0.9
         utterance.pitchMultiplier = 1.0
         utterance.volume = 1.0
-        
+
         if let premiumVoice = AVSpeechSynthesisVoice(identifier: "com.apple.voice.premium.en-GB.Malcolm") {
             utterance.voice = premiumVoice
-        } else if let enhancedVoice = AVSpeechSynthesisVoice(identifier: "com.apple.ttsbundle.siri_Martha_en-GB_compact") {
+        } else if let enhancedVoice = AVSpeechSynthesisVoice(
+            identifier: "com.apple.ttsbundle.siri_Martha_en-GB_compact")
+        {
             utterance.voice = enhancedVoice
         } else {
             utterance.voice = AVSpeechSynthesisVoice(language: "en-GB")
         }
-        
+
         synthesizer.speak(utterance)
         Log.audio.debug("Speaking: \(text)")
     }
@@ -96,7 +99,7 @@ extension ScoreAnnouncer: AVSpeechSynthesizerDelegate {
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
         Log.audio.debug("Finished speaking")
     }
-    
+
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
         Log.audio.debug("Cancelled speaking")
     }

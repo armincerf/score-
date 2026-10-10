@@ -7,7 +7,7 @@
 //
 
 import Foundation
-import Combine
+import Observation
 @preconcurrency import WatchConnectivity
 import os
 
@@ -29,7 +29,7 @@ nonisolated struct MessageData: Sendable {
     let currentMatchGamesData: Data?
     let matchHistoryData: Data?
     let currentGamePointsData: Data?
-    
+
     init(from message: [String: Any]) {
         self.highlightConfirmed = message["highlightConfirmed"] as? Bool
         self.highlightCount = message["highlightCount"] as? Int
@@ -48,26 +48,26 @@ nonisolated struct MessageData: Sendable {
         self.matchHistoryData = message["matchHistory"] as? Data
         self.currentGamePointsData = message["currentGamePoints"] as? Data
     }
-    
+
     func toScoreState() -> ScoreState? {
         guard let p1Score = playerOneScore, let p2Score = playerTwoScore else { return nil }
-        
+
         var currentMatchGames: [GameResult] = []
         var matchHistory: [MatchResult] = []
         var currentGamePoints: [PointEvent] = []
-        
+
         if let gamesData = currentMatchGamesData {
             currentMatchGames = (try? JSONDecoder().decode([GameResult].self, from: gamesData)) ?? []
         }
-        
+
         if let matchData = matchHistoryData {
             matchHistory = (try? JSONDecoder().decode([MatchResult].self, from: matchData)) ?? []
         }
-        
+
         if let pointsData = currentGamePointsData {
             currentGamePoints = (try? JSONDecoder().decode([PointEvent].self, from: pointsData)) ?? []
         }
-        
+
         var state = ScoreState(
             playerOneScore: p1Score,
             playerTwoScore: p2Score,
@@ -84,21 +84,22 @@ nonisolated struct MessageData: Sendable {
             servingPlayer: servingPlayer ?? 1,
             currentGameFirstServer: currentGameFirstServer
         )
-        
+
         if let startTimeInterval = recordingStartTime {
             state.recordingStartTime = Date(timeIntervalSince1970: startTimeInterval)
         }
-        
+
         return state
     }
 }
 
 @MainActor
-final class WatchSessionManager: NSObject, ObservableObject {
-    @Published var scoreState = ScoreState()
-    @Published var isConnected = false
-    @Published var highlightCount = 0  // Track highlights marked this session
-    @Published var pendingAction: PendingAction? = nil
+@Observable
+final class WatchSessionManager: NSObject {
+    var scoreState = ScoreState()
+    var isConnected = false
+    var highlightCount = 0  // Track highlights marked this session
+    var pendingAction: PendingAction?
 
     enum PendingAction {
         case player1Score
@@ -122,7 +123,7 @@ final class WatchSessionManager: NSObject, ObservableObject {
     // MARK: - Send to iPhone
 
     private func sendCommand(_ command: String, data: [String: Any] = [:]) {
-        guard let session = session else { return }
+        guard let session else { return }
 
         var message = data
         message["command"] = command
@@ -143,7 +144,7 @@ final class WatchSessionManager: NSObject, ObservableObject {
     }
 
     private func sendScore() {
-        guard let session = session else { return }
+        guard let session else { return }
 
         let message = scoreState.toDictionary()
 
@@ -200,7 +201,7 @@ final class WatchSessionManager: NSObject, ObservableObject {
 
         // Set timeout to clear pending state if no response
         pendingTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: false) { [weak self] _ in
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 self?.clearPendingState()
                 Log.session.warning("⚠️ Timeout waiting for iOS response")
             }
@@ -251,15 +252,17 @@ final class WatchSessionManager: NSObject, ObservableObject {
 // MARK: - WCSessionDelegate
 
 extension WatchSessionManager: WCSessionDelegate {
-    nonisolated func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
+    nonisolated func session(
+        _ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?
+    ) {
         let isActivated = activationState == .activated
         let isReachable = session.isReachable
         let context = session.applicationContext
         let messageData = context.isEmpty ? nil : MessageData(from: context)
-        
+
         Task { @MainActor in
             self.isConnected = isActivated
-            if let messageData = messageData {
+            if let messageData {
                 self.handleMessageData(messageData)
             }
             if isActivated {
@@ -291,7 +294,9 @@ extension WatchSessionManager: WCSessionDelegate {
         }
     }
 
-    nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any], replyHandler: @escaping ([String: Any]) -> Void) {
+    nonisolated func session(
+        _ session: WCSession, didReceiveMessage message: [String: Any], replyHandler: @escaping ([String: Any]) -> Void
+    ) {
         let messageData = MessageData(from: message)
         Task { @MainActor in
             self.handleMessageData(messageData)
@@ -308,14 +313,14 @@ extension WatchSessionManager: WCSessionDelegate {
 
     // iOS-only delegate methods (required for protocol conformance even though not used on watchOS)
     #if os(iOS)
-    nonisolated func sessionDidBecomeInactive(_ session: WCSession) {
-        // iOS only - not called on watchOS
-    }
+        nonisolated func sessionDidBecomeInactive(_ session: WCSession) {
+            // iOS only - not called on watchOS
+        }
 
-    nonisolated func sessionDidDeactivate(_ session: WCSession) {
-        // iOS only - not called on watchOS
-        session.activate()
-    }
+        nonisolated func sessionDidDeactivate(_ session: WCSession) {
+            // iOS only - not called on watchOS
+            session.activate()
+        }
     #endif
 
     private func handleMessageData(_ messageData: MessageData) {
@@ -375,6 +380,8 @@ extension WatchSessionManager: WCSessionDelegate {
         }
 
         self.scoreState = newState
-        Log.session.debug("State updated: P1=\(newState.playerOneScore) P2=\(newState.playerTwoScore) Recording=\(newState.isRecording)")
+        Log.session.debug(
+            "State updated: P1=\(newState.playerOneScore) P2=\(newState.playerTwoScore) Recording=\(newState.isRecording)"
+        )
     }
 }

@@ -1,20 +1,20 @@
 //
-//  scorewatchApp.swift
+//  ScoreWatchApp.swift
 //  scorewatch Watch App
 //
-//  Created by Alex Davis on 29/11/2025.
+//  Watch app entry point.
 //
 
 import SwiftUI
 
 @main
-struct scorewatch_Watch_AppApp: App {
-    @StateObject private var session = WatchSessionManager()
+struct ScoreWatchApp: App {
+    @State private var session = WatchSessionManager()
 
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .environmentObject(session)
+                .environment(session)
         }
     }
 }

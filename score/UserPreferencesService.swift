@@ -26,14 +26,13 @@ class UserPreferencesService {
 
             if let existing = preferences.first {
                 return existing
-            } else {
-                // Create default preferences
-                let newPreferences = UserPreferences()
-                modelContext.insert(newPreferences)
-                try modelContext.save()
-                Log.store.info("Created default preferences")
-                return newPreferences
             }
+            // Create default preferences
+            let newPreferences = UserPreferences()
+            modelContext.insert(newPreferences)
+            try modelContext.save()
+            Log.store.info("Created default preferences")
+            return newPreferences
         } catch {
             Log.store.error("Error fetching preferences: \(error)")
             // Return defaults without saving on error

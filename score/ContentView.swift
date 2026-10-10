@@ -5,11 +5,11 @@
 //  Main entry point - displays HomeView
 //
 
-import SwiftUI
 import SwiftData
+import SwiftUI
 
 struct ContentView: View {
-    @EnvironmentObject var connectivity: WatchConnectivityManager
+    @Environment(WatchConnectivityManager.self) private var connectivity
 
     var body: some View {
         HomeView()
@@ -17,20 +17,8 @@ struct ContentView: View {
 }
 
 #Preview {
-    // Preview with mock dependencies
-    let container = try! ModelContainer(for: StoredMatch.self, StoredMatchEvent.self, UserPreferences.self)
-    let context = container.mainContext
-    let eventStore = EventStore(modelContext: context)
-    let stateProjector = StateProjector()
-    let undoService = UndoService(eventStore: eventStore, stateProjector: stateProjector)
-    let connectivity = WatchConnectivityManager(
-        eventStore: eventStore,
-        stateProjector: stateProjector,
-        undoService: undoService,
-        modelContext: context
-    )
-
-    return ContentView()
-        .environmentObject(connectivity)
-        .modelContainer(container)
+    let fixture = PreviewSupport.makeFixture()
+    ContentView()
+        .environment(fixture.connectivity)
+        .modelContainer(fixture.container)
 }

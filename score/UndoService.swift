@@ -29,9 +29,11 @@ class UndoService {
         let currentGameEvents = try eventStore.getCurrentGameEvents(matchId: matchId)
 
         // Find last non-undone PointScored event
-        guard let lastPointEvent = currentGameEvents
-            .reversed()
-            .first(where: { $0.eventType == EventType.pointScored.rawValue && !$0.isUndone })
+        guard
+            let lastPointEvent =
+                currentGameEvents
+                .reversed()
+                .first(where: { $0.eventType == EventType.pointScored.rawValue && !$0.isUndone })
         else {
             Log.store.debug("No points to undo in current game")
             return nil
@@ -80,9 +82,11 @@ class UndoService {
         let currentGameEvents = try eventStore.getCurrentGameEvents(matchId: matchId)
 
         // Find last non-undone HighlightMarked event
-        guard let lastHighlightEvent = currentGameEvents
-            .reversed()
-            .first(where: { $0.eventType == EventType.highlightMarked.rawValue && !$0.isUndone })
+        guard
+            let lastHighlightEvent =
+                currentGameEvents
+                .reversed()
+                .first(where: { $0.eventType == EventType.highlightMarked.rawValue && !$0.isUndone })
         else {
             Log.store.debug("No highlights to undo in current game")
             return nil
@@ -117,9 +121,8 @@ class UndoService {
 
         // Check if there are any non-undone PointScored events
         return currentGameEvents.contains(where: {
-            ($0.eventType == EventType.pointScored.rawValue ||
-             $0.eventType == EventType.highlightMarked.rawValue) &&
-            !$0.isUndone
+            ($0.eventType == EventType.pointScored.rawValue || $0.eventType == EventType.highlightMarked.rawValue)
+                && !$0.isUndone
         })
     }
 
@@ -128,9 +131,8 @@ class UndoService {
         let currentGameEvents = try eventStore.getCurrentGameEvents(matchId: matchId)
 
         return currentGameEvents.filter {
-            ($0.eventType == EventType.pointScored.rawValue ||
-             $0.eventType == EventType.highlightMarked.rawValue) &&
-            !$0.isUndone
+            ($0.eventType == EventType.pointScored.rawValue || $0.eventType == EventType.highlightMarked.rawValue)
+                && !$0.isUndone
         }.count
     }
 
@@ -139,13 +141,14 @@ class UndoService {
         let currentGameEvents = try eventStore.getCurrentGameEvents(matchId: matchId)
 
         // Find last non-undone action
-        guard let lastAction = currentGameEvents
-            .reversed()
-            .first(where: {
-                ($0.eventType == EventType.pointScored.rawValue ||
-                 $0.eventType == EventType.highlightMarked.rawValue) &&
-                !$0.isUndone
-            })
+        guard
+            let lastAction =
+                currentGameEvents
+                .reversed()
+                .first(where: {
+                    ($0.eventType == EventType.pointScored.rawValue
+                        || $0.eventType == EventType.highlightMarked.rawValue) && !$0.isUndone
+                })
         else {
             return nil
         }

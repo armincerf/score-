@@ -65,7 +65,7 @@ nonisolated struct WatchSyncState: Codable {
             "playerTwoGames": playerTwoGames,
             "isRecording": isRecording,
             "highlightCountInCurrentGame": highlightCountInCurrentGame,
-            "highlightCountInMatch": highlightCountInMatch
+            "highlightCountInMatch": highlightCountInMatch,
         ]
 
         if let name = playerOneName {

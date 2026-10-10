@@ -5,14 +5,13 @@
 //  Main game view with camera preview and scoring
 //
 
-import SwiftUI
-import SwiftData
 import AVFoundation
-import AudioToolbox
+import SwiftData
+import SwiftUI
 import os
 
 struct GameView: View {
-    @EnvironmentObject var connectivity: WatchConnectivityManager
+    @Environment(WatchConnectivityManager.self) private var connectivity
     @Environment(\.dismiss) var dismiss
     @Environment(\.modelContext) private var modelContext
     @State private var showingEndGameAlert = false
@@ -27,9 +26,9 @@ struct GameView: View {
 
     private var isRunningOnSimulator: Bool {
         #if targetEnvironment(simulator)
-        return true
+            return true
         #else
-        return false
+            return false
         #endif
     }
 
@@ -83,203 +82,17 @@ struct GameView: View {
                     .background(Color.blue.opacity(0.2))
                 }
 
-                // Top bar - recording indicator and stats
-                VStack(spacing: 4) {
-                    // Match name
-                    if let matchName = connectivity.scoreState.currentMatchName {
-                        Text(matchName)
-                            .font(.caption)
-                            .foregroundColor(.white.opacity(0.9))
-                    }
-
-                    HStack {
-                        // Recording indicator or disabled message
-                        if cameraEnabled {
-                            HStack(spacing: 8) {
-                                Circle()
-                                    .fill(Color.red)
-                                    .frame(width: 12, height: 12)
-                                Text("REC")
-                                    .font(.subheadline)
-                                    .bold()
-                                Text(formatDuration(connectivity.recordingDuration))
-                                    .font(.subheadline)
-                                    .monospacedDigit()
-                            }
-                            .foregroundColor(.white)
-                        } else {
-                            HStack(spacing: 8) {
-                                Image(systemName: "video.slash")
-                                    .font(.subheadline)
-                                Text("Video disabled in settings")
-                                    .font(.subheadline)
-                            }
-                            .foregroundColor(.gray)
-                        }
-
-                        Spacer()
-
-                        // Highlight count
-                        if connectivity.scoreState.totalHighlightsInMatch > 0 {
-                            HStack(spacing: 4) {
-                                Image(systemName: "star.fill")
-                                Text("\(connectivity.scoreState.totalHighlightsInMatch)")
-                                    .bold()
-                            }
-                            .foregroundColor(.yellow)
-                        }
-                    }
-                }
-                .padding()
-                .glassEffect(in: .rect(cornerRadius: 0))
+                RecordingStatusBar(cameraEnabled: cameraEnabled)
 
                 Spacer()
 
-                // Scoring area
-                VStack(spacing: 16) {
-                    // Games score
-                    HStack(spacing: 12) {
-                        Text("Games")
-                            .foregroundColor(.white)
-                        Text("\(connectivity.scoreState.playerOneGames)")
-                            .font(.title2)
-                            .bold()
-                            .foregroundColor(.blue)
-                        Text("-")
-                            .foregroundColor(.white)
-                        Text("\(connectivity.scoreState.playerTwoGames)")
-                            .font(.title2)
-                            .bold()
-                            .foregroundColor(.red)
-                    }
-
-                    // Current game points
-                    HStack(spacing: 32) {
-                        // Player 1
-                        VStack(spacing: 12) {
-                            Text(connectivity.scoreState.playerOneName ?? "Player 1")
-                                .font(.headline)
-                                .foregroundColor(.white.opacity(0.8))
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.5)
-                            HStack(spacing: 8) {
-                                Text("\(connectivity.scoreState.playerOneScore)")
-                                    .font(.system(size: 72, weight: .bold, design: .rounded))
-                                    .monospacedDigit()
-                                    .foregroundColor(.blue)
-                                if connectivity.scoreState.servingPlayer == 1 {
-                                    Image(systemName: "circle.fill")
-                                        .font(.caption)
-                                        .foregroundColor(.green)
-                                }
-                            }
-                            HStack(spacing: 12) {
-                                Button {
-                                    connectivity.incrementPlayer1()
-                                } label: {
-                                    Image(systemName: "plus.circle.fill")
-                                        .font(.title)
-                                }
-                                .buttonStyle(.borderedProminent)
-                                .tint(.blue)
-
-                                Button {
-                                    connectivity.decrementPlayer1()
-                                } label: {
-                                    Image(systemName: "minus.circle.fill")
-                                        .font(.title)
-                                }
-                                .buttonStyle(.bordered)
-                                .tint(.blue)
-                            }
-                        }
-
-                        // Player 2
-                        VStack(spacing: 12) {
-                            Text(connectivity.scoreState.playerTwoName ?? "Player 2")
-                                .font(.headline)
-                                .foregroundColor(.white.opacity(0.8))
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.5)
-                            HStack(spacing: 8) {
-                                if connectivity.scoreState.servingPlayer == 2 {
-                                    Image(systemName: "circle.fill")
-                                        .font(.caption)
-                                        .foregroundColor(.green)
-                                }
-                                Text("\(connectivity.scoreState.playerTwoScore)")
-                                    .font(.system(size: 72, weight: .bold, design: .rounded))
-                                    .monospacedDigit()
-                                    .foregroundColor(.red)
-                            }
-                            HStack(spacing: 12) {
-                                Button {
-                                    connectivity.incrementPlayer2()
-                                } label: {
-                                    Image(systemName: "plus.circle.fill")
-                                        .font(.title)
-                                }
-                                .buttonStyle(.borderedProminent)
-                                .tint(.red)
-
-                                Button {
-                                    connectivity.decrementPlayer2()
-                                } label: {
-                                    Image(systemName: "minus.circle.fill")
-                                        .font(.title)
-                                }
-                                .buttonStyle(.bordered)
-                                .tint(.red)
-                            }
-                        }
-                    }
-
-                    // Manual highlight button
-                    Button {
-                        // Play sound and haptic feedback
-                        AudioServicesPlaySystemSound(1057)
-                        let generator = UINotificationFeedbackGenerator()
-                        generator.notificationOccurred(.success)
-
-                        connectivity.markHighlight()
-                    } label: {
-                        Label("Mark Highlight", systemImage: "star.fill")
-                            .font(.headline)
-                    }
-                    .buttonStyle(.bordered)
-                    .tint(.yellow)
-                    .padding(.top, 8)
-
-                    // Undo button
-                    Button {
-                        undoLastAction()
-                    } label: {
-                        Label("Undo Last Point", systemImage: "arrow.uturn.backward.circle.fill")
-                            .font(.headline)
-                    }
-                    .buttonStyle(.bordered)
-                    .tint(.gray)
-                    .disabled(!canUndo)
-                    .opacity(canUndo ? 1.0 : 0.5)
-
-                    // Game controls
-                    HStack(spacing: 16) {
-                        Button("End Game") {
-                            showingEndGameAlert = true
-                        }
-                        .buttonStyle(.glassProminent)
-                        .padding(8)
-                        .tint(.orange)
-
-                        Button("End Match") {
-                            showingEndMatchAlert = true
-                        }
-                        .buttonStyle(.glassProminent)
-                        .padding(8)
-                        .tint(.purple)
-                    }
-                    .padding(.top, 8)
-                }
+                ScoringPanel(
+                    canUndo: canUndo,
+                    onMarkHighlight: markHighlight,
+                    onUndo: undoLastAction,
+                    onEndGame: { showingEndGameAlert = true },
+                    onEndMatch: { showingEndMatchAlert = true }
+                )
                 .padding()
                 .glassEffect(in: .rect(cornerRadius: 24))
                 .padding()
@@ -340,7 +153,7 @@ struct GameView: View {
             }
         }
         .alert("End Game", isPresented: $showingEndGameAlert) {
-            Button("Cancel", role: .cancel) { }
+            Button("Cancel", role: .cancel) {}
             Button("End Game", role: .destructive) {
                 connectivity.endGame()
             }
@@ -348,7 +161,7 @@ struct GameView: View {
             Text("Record the final score for this game? Recording will continue for the next game.")
         }
         .alert("End Match", isPresented: $showingEndMatchAlert) {
-            Button("Cancel", role: .cancel) { }
+            Button("Cancel", role: .cancel) {}
             Button("End Match", role: .destructive) {
                 Task {
                     await endMatchAndSave()
@@ -358,7 +171,7 @@ struct GameView: View {
             Text("Stop recording and save the match with highlights?")
         }
         .alert("Cancel Match", isPresented: $showingCancelAlert) {
-            Button("Keep Playing", role: .cancel) { }
+            Button("Keep Playing", role: .cancel) {}
             Button("Delete Match", role: .destructive) {
                 Task { await cancelMatch() }
             }
@@ -379,7 +192,7 @@ struct GameView: View {
                     .monospacedDigit()
 
                 if exportProgress > 0 {
-                    let estimatedTotal = 180.0 // Rough estimate: 3 minutes for typical match
+                    let estimatedTotal = 180.0  // Rough estimate: 3 minutes for typical match
                     let elapsed = estimatedTotal * exportProgress
                     let remaining = estimatedTotal - elapsed
                     Text("About \(Int(remaining))s remaining")
@@ -393,17 +206,16 @@ struct GameView: View {
         }
     }
 
-    private func formatDuration(_ duration: TimeInterval) -> String {
-        let minutes = Int(duration) / 60
-        let seconds = Int(duration) % 60
-        return String(format: "%d:%02d", minutes, seconds)
+    private func markHighlight() {
+        connectivity.playHighlightSound()
+        connectivity.markHighlight()
     }
 
     private func undoLastAction() {
         guard let matchId = connectivity.currentMatchId else { return }
 
         do {
-            if let _ = try connectivity.undoService.undoLastPoint(in: matchId) {
+            if try connectivity.undoService.undoLastPoint(in: matchId) != nil {
                 // Refresh state after undo
                 connectivity.refreshState()
                 updateUndoAvailability()
@@ -461,6 +273,197 @@ struct GameView: View {
     }
 }
 
+// MARK: - Subviews
+
+/// Match name, REC indicator with elapsed time, and highlight count.
+private struct RecordingStatusBar: View {
+    @Environment(WatchConnectivityManager.self) private var connectivity
+    let cameraEnabled: Bool
+
+    var body: some View {
+        VStack(spacing: 4) {
+            if let matchName = connectivity.scoreState.currentMatchName {
+                Text(matchName)
+                    .font(.caption)
+                    .foregroundColor(.white.opacity(0.9))
+            }
+
+            HStack {
+                if cameraEnabled {
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(Color.red)
+                            .frame(width: 12, height: 12)
+                        Text("REC")
+                            .font(.subheadline)
+                            .bold()
+                        Text(
+                            Duration.seconds(connectivity.recordingDuration),
+                            format: .time(pattern: .minuteSecond(padMinuteToLength: 2))
+                        )
+                        .font(.subheadline)
+                        .monospacedDigit()
+                    }
+                    .foregroundColor(.white)
+                } else {
+                    HStack(spacing: 8) {
+                        Image(systemName: "video.slash")
+                            .font(.subheadline)
+                        Text("Video disabled in settings")
+                            .font(.subheadline)
+                    }
+                    .foregroundColor(.gray)
+                }
+
+                Spacer()
+
+                if connectivity.scoreState.totalHighlightsInMatch > 0 {
+                    HStack(spacing: 4) {
+                        Image(systemName: "star.fill")
+                        Text("\(connectivity.scoreState.totalHighlightsInMatch)")
+                            .bold()
+                    }
+                    .foregroundColor(.yellow)
+                }
+            }
+        }
+        .padding()
+        .glassEffect(in: .rect(cornerRadius: 0))
+    }
+}
+
+/// Games score, both players' points with +/- buttons, highlight/undo and game controls.
+private struct ScoringPanel: View {
+    @Environment(WatchConnectivityManager.self) private var connectivity
+    let canUndo: Bool
+    let onMarkHighlight: () -> Void
+    let onUndo: () -> Void
+    let onEndGame: () -> Void
+    let onEndMatch: () -> Void
+
+    var body: some View {
+        VStack(spacing: 16) {
+            HStack(spacing: 12) {
+                Text("Games")
+                    .foregroundColor(.white)
+                Text("\(connectivity.scoreState.playerOneGames)")
+                    .font(.title2)
+                    .bold()
+                    .foregroundColor(.blue)
+                Text("-")
+                    .foregroundColor(.white)
+                Text("\(connectivity.scoreState.playerTwoGames)")
+                    .font(.title2)
+                    .bold()
+                    .foregroundColor(.red)
+            }
+
+            HStack(spacing: 32) {
+                PlayerScoreColumn(
+                    name: connectivity.scoreState.playerOneName ?? "Player 1",
+                    score: connectivity.scoreState.playerOneScore,
+                    isServing: connectivity.scoreState.servingPlayer == 1,
+                    tint: .blue,
+                    serveIndicatorLeading: false,
+                    onIncrement: connectivity.incrementPlayer1,
+                    onDecrement: connectivity.decrementPlayer1
+                )
+                PlayerScoreColumn(
+                    name: connectivity.scoreState.playerTwoName ?? "Player 2",
+                    score: connectivity.scoreState.playerTwoScore,
+                    isServing: connectivity.scoreState.servingPlayer == 2,
+                    tint: .red,
+                    serveIndicatorLeading: true,
+                    onIncrement: connectivity.incrementPlayer2,
+                    onDecrement: connectivity.decrementPlayer2
+                )
+            }
+
+            Button(action: onMarkHighlight) {
+                Label("Mark Highlight", systemImage: "star.fill")
+                    .font(.headline)
+            }
+            .buttonStyle(.bordered)
+            .tint(.yellow)
+            .padding(.top, 8)
+
+            Button(action: onUndo) {
+                Label("Undo Last Point", systemImage: "arrow.uturn.backward.circle.fill")
+                    .font(.headline)
+            }
+            .buttonStyle(.bordered)
+            .tint(.gray)
+            .disabled(!canUndo)
+            .opacity(canUndo ? 1.0 : 0.5)
+
+            HStack(spacing: 16) {
+                Button("End Game", action: onEndGame)
+                    .buttonStyle(.glassProminent)
+                    .padding(8)
+                    .tint(.orange)
+
+                Button("End Match", action: onEndMatch)
+                    .buttonStyle(.glassProminent)
+                    .padding(8)
+                    .tint(.purple)
+            }
+            .padding(.top, 8)
+        }
+    }
+}
+
+/// One player's name, current points, serve indicator and +/- buttons.
+private struct PlayerScoreColumn: View {
+    let name: String
+    let score: Int
+    let isServing: Bool
+    let tint: Color
+    let serveIndicatorLeading: Bool
+    let onIncrement: () -> Void
+    let onDecrement: () -> Void
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Text(name)
+                .font(.headline)
+                .foregroundColor(.white.opacity(0.8))
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
+            HStack(spacing: 8) {
+                if serveIndicatorLeading { serveIndicator }
+                Text("\(score)")
+                    .font(.system(size: 72, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundColor(tint)
+                if !serveIndicatorLeading { serveIndicator }
+            }
+            HStack(spacing: 12) {
+                Button(action: onIncrement) {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.title)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(tint)
+
+                Button(action: onDecrement) {
+                    Image(systemName: "minus.circle.fill")
+                        .font(.title)
+                }
+                .buttonStyle(.bordered)
+                .tint(tint)
+            }
+        }
+    }
+
+    @ViewBuilder private var serveIndicator: some View {
+        if isServing {
+            Image(systemName: "circle.fill")
+                .font(.caption)
+                .foregroundColor(.green)
+        }
+    }
+}
+
 // Camera Preview View - Uses UIViewController for proper orientation handling
 struct CameraPreviewView: UIViewControllerRepresentable {
     let captureSession: AVCaptureSession
@@ -483,52 +486,52 @@ class CameraPreviewViewController: UIViewController {
             updatePreviewSession()
         }
     }
-    
+
     private var previewLayer: AVCaptureVideoPreviewLayer?
-    
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
         setupPreviewLayer()
     }
-    
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         // Update preview layer frame to match view bounds
         previewLayer?.frame = view.bounds
     }
-    
+
     override func viewWillTransition(to size: CGSize, with coordinator: UIViewControllerTransitionCoordinator) {
         super.viewWillTransition(to: size, with: coordinator)
-        
+
         // Update frame and orientation during rotation animation
         coordinator.animate(alongsideTransition: { [weak self] _ in
-            guard let self = self else { return }
+            guard let self else { return }
             self.previewLayer?.frame = CGRect(origin: .zero, size: size)
             self.updatePreviewOrientation()
         })
     }
-    
+
     private func setupPreviewLayer() {
         let layer = AVCaptureVideoPreviewLayer()
         layer.videoGravity = .resizeAspectFill
         layer.frame = view.bounds
         view.layer.addSublayer(layer)
         previewLayer = layer
-        
+
         updatePreviewSession()
         updatePreviewOrientation()
-        
+
         Log.video.info("📹 Created preview layer")
     }
-    
+
     private func updatePreviewSession() {
         previewLayer?.session = captureSession
     }
-    
+
     private func updatePreviewOrientation() {
         guard let connection = previewLayer?.connection else { return }
-        
+
         // Use window scene for accurate orientation (works better than UIDevice orientation)
         let orientation: UIInterfaceOrientation
         if let windowScene = view.window?.windowScene {
@@ -544,7 +547,7 @@ class CameraPreviewViewController: UIViewController {
             default: orientation = .portrait
             }
         }
-        
+
         let rotationAngle: CGFloat
         switch orientation {
         case .portrait:
@@ -558,7 +561,7 @@ class CameraPreviewViewController: UIViewController {
         default:
             rotationAngle = 90
         }
-        
+
         if connection.isVideoRotationAngleSupported(rotationAngle) {
             connection.videoRotationAngle = rotationAngle
             Log.video.debug("📱 Orientation updated to angle: \(rotationAngle) (interface: \(orientation.rawValue))")
@@ -567,21 +570,10 @@ class CameraPreviewViewController: UIViewController {
 }
 
 #Preview {
-    let container = try! ModelContainer(for: StoredMatch.self, StoredMatchEvent.self, UserPreferences.self)
-    let context = container.mainContext
-    let eventStore = EventStore(modelContext: context)
-    let stateProjector = StateProjector()
-    let undoService = UndoService(eventStore: eventStore, stateProjector: stateProjector)
-    let connectivity = WatchConnectivityManager(
-        eventStore: eventStore,
-        stateProjector: stateProjector,
-        undoService: undoService,
-        modelContext: context
-    )
-
-    return NavigationStack {
+    let fixture = PreviewSupport.makeFixture()
+    NavigationStack {
         GameView()
-            .environmentObject(connectivity)
-            .modelContainer(container)
     }
+    .environment(fixture.connectivity)
+    .modelContainer(fixture.container)
 }

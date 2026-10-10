@@ -5,16 +5,16 @@
 //  Detailed match view with highlight reel playback
 //
 
-import SwiftUI
 import AVKit
 import FoundationModels
+import SwiftUI
 import os
 
 struct MatchDetailView: View {
     let match: MatchResult
     let matchNumber: Int
     let allMatches: [MatchResult]
-    
+
     init(match: MatchResult, matchNumber: Int, allMatches: [MatchResult] = []) {
         self.match = match
         self.matchNumber = matchNumber
@@ -34,25 +34,34 @@ struct MatchDetailView: View {
 
     private var hasHighlightVideo: Bool {
         guard let urlString = match.highlightVideoURL,
-              let url = URL(string: urlString) else { return false }
+            let url = URL(string: urlString)
+        else { return false }
         return FileManager.default.fileExists(atPath: url.path)
     }
 
     private var hasFullVideo: Bool {
         guard let urlString = match.fullVideoURL,
-              let url = URL(string: urlString) else { return false }
+            let url = URL(string: urlString)
+        else { return false }
         return FileManager.default.fileExists(atPath: url.path)
     }
 
-    private var availableVideos: [(title: String, player: AVPlayer?, url: URL?, icon: String)] {
-        var videos: [(String, AVPlayer?, URL?, String)] = []
+    private struct VideoOption {
+        let title: String
+        let player: AVPlayer?
+        let url: URL?
+        let icon: String
+    }
+
+    private var availableVideos: [VideoOption] {
+        var videos: [VideoOption] = []
 
         if hasHighlightVideo, let urlString = match.highlightVideoURL, let url = URL(string: urlString) {
-            videos.append(("Highlight Reel", highlightPlayer, url, "star.fill"))
+            videos.append(VideoOption(title: "Highlight Reel", player: highlightPlayer, url: url, icon: "star.fill"))
         }
 
         if hasFullVideo, let urlString = match.fullVideoURL, let url = URL(string: urlString) {
-            videos.append(("Full Match", fullVideoPlayer, url, "video.fill"))
+            videos.append(VideoOption(title: "Full Match", player: fullVideoPlayer, url: url, icon: "video.fill"))
         }
 
         return videos
@@ -81,9 +90,8 @@ struct MatchDetailView: View {
         if let vsRange = baseName.range(of: " vs ") {
             if playerNumber == 1 {
                 return String(baseName[..<vsRange.lowerBound])
-            } else {
-                return String(baseName[vsRange.upperBound...])
             }
+            return String(baseName[vsRange.upperBound...])
         }
 
         return nil
@@ -157,7 +165,7 @@ struct MatchDetailView: View {
 
                 // AI Match Summary
                 MatchSummaryContainer(matchResult: match, allMatches: allMatches)
-                
+
                 // Match Statistics
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Match Statistics")
@@ -178,7 +186,7 @@ struct MatchDetailView: View {
 
                         StatRow(label: "Total Points", value: "\(match.totalPoints)")
 
-                        let totalHighlights = match.games.reduce(0) { $0 + $1.points.filter { $0.isHighlight }.count }
+                        let totalHighlights = match.games.reduce(0) { $0 + $1.points.filter(\.isHighlight).count }
                         if totalHighlights > 0 {
                             StatRow(label: "Highlights", value: "\(totalHighlights)")
                         }
@@ -284,7 +292,7 @@ struct MatchDetailView: View {
                     }
                 } else {
                     // No videos message
-                    let totalHighlights = match.games.reduce(0) { $0 + $1.points.filter { $0.isHighlight }.count }
+                    let totalHighlights = match.games.reduce(0) { $0 + $1.points.filter(\.isHighlight).count }
                     if totalHighlights == 0 {
                         VStack(spacing: 12) {
                             Image(systemName: "star.slash")
@@ -293,10 +301,12 @@ struct MatchDetailView: View {
                             Text("No highlights marked")
                                 .font(.headline)
                                 .foregroundColor(.secondary)
-                            Text("Use the double-tap gesture on your watch or the star button to mark highlights during play")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .multilineTextAlignment(.center)
+                            Text(
+                                "Use the double-tap gesture on your watch or the star button to mark highlights during play"
+                            )
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
                         }
                         .padding()
                         .frame(maxWidth: .infinity)
@@ -332,7 +342,7 @@ struct MatchDetailView: View {
                 }
 
                 // Highlights list
-                let allHighlights = match.games.flatMap { $0.points.filter { $0.isHighlight } }
+                let allHighlights = match.games.flatMap { $0.points.filter(\.isHighlight) }
                 if !allHighlights.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack {
@@ -369,7 +379,8 @@ struct MatchDetailView: View {
 
         // Load highlight reel
         if let videoURLString = match.highlightVideoURL,
-           let url = URL(string: videoURLString) {
+            let url = URL(string: videoURLString)
+        {
             let exists = FileManager.default.fileExists(atPath: url.path)
             Log.ui.debug("Highlight file exists: \(exists) at \(url.path)")
             if exists {
@@ -381,7 +392,8 @@ struct MatchDetailView: View {
 
         // Load full video
         if let videoURLString = match.fullVideoURL,
-           let url = URL(string: videoURLString) {
+            let url = URL(string: videoURLString)
+        {
             let exists = FileManager.default.fileExists(atPath: url.path)
             Log.ui.debug("Full video file exists: \(exists) at \(url.path)")
             if exists {
@@ -399,9 +411,8 @@ struct MatchDetailView: View {
         let secs = Int(seconds) % 60
         if minutes > 0 {
             return String(format: "%dm %ds", minutes, secs)
-        } else {
-            return String(format: "%ds", secs)
         }
+        return String(format: "%ds", secs)
     }
 }
 
@@ -456,7 +467,7 @@ struct GameDetailRow: View {
                         .cornerRadius(4)
                 }
 
-                let highlights = game.points.filter { $0.isHighlight }.count
+                let highlights = game.points.filter(\.isHighlight).count
                 if highlights > 0 {
                     HStack(spacing: 4) {
                         Image(systemName: "star.fill")
@@ -505,9 +516,8 @@ struct GameDetailRow: View {
         let secs = Int(seconds) % 60
         if minutes > 0 {
             return String(format: "%dm %ds", minutes, secs)
-        } else {
-            return String(format: "%ds", secs)
         }
+        return String(format: "%ds", secs)
     }
 }
 
@@ -574,12 +584,14 @@ struct HighlightRow: View {
                 playerTwoGames: 1,
                 winner: 1,
                 games: [
-                    GameResult(playerOneScore: 11, playerTwoScore: 7, winner: 1, points: [
-                        PointEvent(player: 1, isHighlight: true, videoTimestamp: 45.2)
-                    ], duration: 180),
+                    GameResult(
+                        playerOneScore: 11, playerTwoScore: 7, winner: 1,
+                        points: [
+                            PointEvent(player: 1, isHighlight: true, videoTimestamp: 45.2)
+                        ], duration: 180),
                     GameResult(playerOneScore: 11, playerTwoScore: 9, winner: 1, points: [], duration: 210),
                     GameResult(playerOneScore: 9, playerTwoScore: 11, winner: 2, points: [], duration: 195),
-                    GameResult(playerOneScore: 11, playerTwoScore: 8, winner: 1, points: [], duration: 165)
+                    GameResult(playerOneScore: 11, playerTwoScore: 8, winner: 1, points: [], duration: 165),
                 ],
                 duration: 750
             ),

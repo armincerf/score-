@@ -5,11 +5,11 @@
 //  View all past matches
 //
 
-import SwiftUI
 import SwiftData
+import SwiftUI
 
 struct MatchHistoryView: View {
-    @EnvironmentObject var connectivity: WatchConnectivityManager
+    @Environment(WatchConnectivityManager.self) private var connectivity
 
     var body: some View {
         List {
@@ -29,12 +29,15 @@ struct MatchHistoryView: View {
                 .padding(.vertical, 60)
                 .listRowBackground(Color.clear)
             } else {
-                ForEach(Array(connectivity.scoreState.matchHistory.enumerated().reversed()), id: \.offset) { index, match in
-                    NavigationLink(destination: MatchDetailView(
-                        match: match,
-                        matchNumber: connectivity.scoreState.matchHistory.count - index,
-                        allMatches: connectivity.scoreState.matchHistory
-                    )) {
+                ForEach(Array(connectivity.scoreState.matchHistory.enumerated().reversed()), id: \.offset) {
+                    index, match in
+                    NavigationLink(
+                        destination: MatchDetailView(
+                            match: match,
+                            matchNumber: connectivity.scoreState.matchHistory.count - index,
+                            allMatches: connectivity.scoreState.matchHistory
+                        )
+                    ) {
                         MatchRowView(match: match, matchNumber: connectivity.scoreState.matchHistory.count - index)
                     }
                 }
@@ -81,10 +84,9 @@ struct MatchRowView: View {
             if playerNumber == 1 {
                 let fullName = String(baseName[..<vsRange.lowerBound])
                 return fullName.split(separator: " ").first.map(String.init) ?? "P1"
-            } else {
-                let fullName = String(baseName[vsRange.upperBound...])
-                return fullName.split(separator: " ").first.map(String.init) ?? "P2"
             }
+            let fullName = String(baseName[vsRange.upperBound...])
+            return fullName.split(separator: " ").first.map(String.init) ?? "P2"
         }
 
         return playerNumber == 1 ? "P1" : "P2"
@@ -129,19 +131,22 @@ struct MatchRowView: View {
                 }
 
                 // Winner badge
-                Text(match.winner == 1 ? "\(extractPlayerName(playerNumber: 1)) Won" : "\(extractPlayerName(playerNumber: 2)) Won")
-                    .font(.caption)
-                    .bold()
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(match.winner == 1 ? Color.blue.opacity(0.2) : Color.red.opacity(0.2))
-                    .foregroundColor(match.winner == 1 ? .blue : .red)
-                    .cornerRadius(6)
+                Text(
+                    match.winner == 1
+                        ? "\(extractPlayerName(playerNumber: 1)) Won" : "\(extractPlayerName(playerNumber: 2)) Won"
+                )
+                .font(.caption)
+                .bold()
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(match.winner == 1 ? Color.blue.opacity(0.2) : Color.red.opacity(0.2))
+                .foregroundColor(match.winner == 1 ? .blue : .red)
+                .cornerRadius(6)
 
                 Spacer()
 
                 // Highlights indicator
-                let totalHighlights = match.games.reduce(0) { $0 + $1.points.filter { $0.isHighlight }.count }
+                let totalHighlights = match.games.reduce(0) { $0 + $1.points.filter(\.isHighlight).count }
                 if totalHighlights > 0 {
                     HStack(spacing: 4) {
                         Image(systemName: "star.fill")
@@ -207,28 +212,16 @@ struct MatchRowView: View {
         let secs = Int(seconds) % 60
         if minutes > 0 {
             return String(format: "%dm %ds", minutes, secs)
-        } else {
-            return String(format: "%ds", secs)
         }
+        return String(format: "%ds", secs)
     }
 }
 
 #Preview {
-    let container = try! ModelContainer(for: StoredMatch.self, StoredMatchEvent.self, UserPreferences.self)
-    let context = container.mainContext
-    let eventStore = EventStore(modelContext: context)
-    let stateProjector = StateProjector()
-    let undoService = UndoService(eventStore: eventStore, stateProjector: stateProjector)
-    let connectivity = WatchConnectivityManager(
-        eventStore: eventStore,
-        stateProjector: stateProjector,
-        undoService: undoService,
-        modelContext: context
-    )
-
-    return NavigationStack {
+    let fixture = PreviewSupport.makeFixture()
+    NavigationStack {
         MatchHistoryView()
-            .environmentObject(connectivity)
-            .modelContainer(container)
     }
+    .environment(fixture.connectivity)
+    .modelContainer(fixture.container)
 }

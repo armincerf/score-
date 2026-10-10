@@ -99,18 +99,25 @@ nonisolated enum MockVideoGenerator {
         CVPixelBufferLockBaseAddress(buffer, [])
         defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
 
-        guard let context = CGContext(
-            data: CVPixelBufferGetBaseAddress(buffer),
-            width: Int(videoSize.width),
-            height: Int(videoSize.height),
-            bitsPerComponent: 8,
-            bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue
-        ) else {
+        guard
+            let context = CGContext(
+                data: CVPixelBufferGetBaseAddress(buffer),
+                width: Int(videoSize.width),
+                height: Int(videoSize.height),
+                bitsPerComponent: 8,
+                bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue
+            )
+        else {
             return nil
         }
 
+        draw(in: context, time: time)
+        return buffer
+    }
+
+    private static func draw(in context: CGContext, time: TimeInterval) {
         // UIKit string drawing needs a current context; push ours for the duration of the draw.
         UIGraphicsPushContext(context)
         defer { UIGraphicsPopContext() }
@@ -130,9 +137,7 @@ nonisolated enum MockVideoGenerator {
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.alignment = .center
 
-        let minutes = Int(time) / 60
-        let seconds = Int(time) % 60
-        let timeString = String(format: "%d:%02d", minutes, seconds)
+        let timeString = String(format: "%d:%02d", Int(time) / 60, Int(time) % 60)
         let timeAttributes: [NSAttributedString.Key: Any] = [
             .font: UIFont.monospacedSystemFont(ofSize: 80, weight: .bold),
             .foregroundColor: UIColor.white,
@@ -150,7 +155,5 @@ nonisolated enum MockVideoGenerator {
         ]
         NSAttributedString(string: "MOCK MATCH VIDEO", attributes: labelAttributes)
             .draw(in: CGRect(x: 0, y: 40, width: videoSize.width, height: 40))
-
-        return buffer
     }
 }

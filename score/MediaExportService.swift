@@ -13,7 +13,6 @@ import Foundation
 import UIKit
 
 enum MediaExportService {
-
     // MARK: - Video Orientation
 
     enum VideoOrientation: Sendable, CustomStringConvertible {
@@ -33,6 +32,16 @@ enum MediaExportService {
 
         var isLandscape: Bool {
             self == .landscapeLeft || self == .landscapeRight
+        }
+
+        /// AVCaptureConnection.videoRotationAngle that records this orientation upright.
+        var rotationAngle: CGFloat {
+            switch self {
+            case .portrait: return 90
+            case .portraitUpsideDown: return 270
+            case .landscapeLeft: return 0
+            case .landscapeRight: return 180
+            }
         }
 
         static func from(deviceOrientation: UIDeviceOrientation) -> VideoOrientation {
@@ -264,7 +273,7 @@ enum MediaExportService {
     }
 
     private static func fileSize(at url: URL) -> Int64? {
-        (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64) ?? nil
+        (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64)
     }
 
     private static func createOrientedComposition(
@@ -275,10 +284,12 @@ enum MediaExportService {
     ) async throws -> CompositionResult {
         let composition = AVMutableComposition()
 
-        guard let videoTrack = composition.addMutableTrack(
-            withMediaType: .video,
-            preferredTrackID: kCMPersistentTrackID_Invalid
-        ) else {
+        guard
+            let videoTrack = composition.addMutableTrack(
+                withMediaType: .video,
+                preferredTrackID: kCMPersistentTrackID_Invalid
+            )
+        else {
             throw ExportError.failedToCreateVideoTrack
         }
 

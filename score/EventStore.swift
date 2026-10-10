@@ -33,13 +33,15 @@ class EventStore {
         modelContext.insert(storedEvent)
         try modelContext.save()
 
-        Log.store.debug("Appended \(event.eventType.rawValue) event #\(event.sequenceNumber) for match \(event.matchId)")
+        Log.store.debug(
+            "Appended \(event.eventType.rawValue) event #\(event.sequenceNumber) for match \(event.matchId)")
     }
 
     // MARK: - Query Events
 
     func getEvents(matchId: UUID, includeUndone: Bool = false) throws -> [StoredMatchEvent] {
-        let predicate = includeUndone
+        let predicate =
+            includeUndone
             ? #Predicate<StoredMatchEvent> { $0.matchId == matchId }
             : #Predicate<StoredMatchEvent> { $0.matchId == matchId && !$0.isUndone }
 
@@ -61,7 +63,7 @@ class EventStore {
 
     func getNextSequenceNumber(matchId: UUID) throws -> Int {
         let events = try getEvents(matchId: matchId, includeUndone: true)
-        return (events.map { $0.sequenceNumber }.max() ?? -1) + 1
+        return (events.map(\.sequenceNumber).max() ?? -1) + 1
     }
 
     // MARK: - Match Operations
@@ -153,9 +155,11 @@ class EventStore {
         let allEvents = try getEvents(matchId: matchId, includeUndone: false)
 
         // Find the last GameEndedEvent
-        guard let lastGameEndedIndex = allEvents.lastIndex(where: {
-            $0.eventType == EventType.gameEnded.rawValue
-        }) else {
+        guard
+            let lastGameEndedIndex = allEvents.lastIndex(where: {
+                $0.eventType == EventType.gameEnded.rawValue
+            })
+        else {
             // No game ended yet, return all events
             return allEvents
         }

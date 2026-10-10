@@ -9,7 +9,6 @@
 import Foundation
 
 nonisolated enum ServingLogic {
-
     // MARK: - Initial Server Determination
 
     /// Determines who serves first in a new match based on match history
@@ -22,8 +21,7 @@ nonisolated enum ServingLogic {
         }
 
         // Loser of previous match serves first
-        let loser = lastMatch.winner == 1 ? 2 : 1
-        return loser
+        return lastMatch.winner == 1 ? 2 : 1
     }
 
     // MARK: - Game First Server
@@ -75,7 +73,7 @@ nonisolated enum ServingLogic {
         if playerOneScore >= 10 && playerTwoScore >= 10 {
             // Service changes every point
             // If total points is even, first server serves; if odd, other player serves
-            return totalPoints % 2 == 0 ? firstServer : (firstServer == 1 ? 2 : 1)
+            return totalPoints.isMultiple(of: 2) ? firstServer : (firstServer == 1 ? 2 : 1)
         }
 
         // Normal game (before 10-10): service changes every 2 points
@@ -83,7 +81,7 @@ nonisolated enum ServingLogic {
         let serviceTurns = totalPoints / 2
 
         // If service turns is even, first server serves; if odd, other player serves
-        return serviceTurns % 2 == 0 ? firstServer : (firstServer == 1 ? 2 : 1)
+        return serviceTurns.isMultiple(of: 2) ? firstServer : (firstServer == 1 ? 2 : 1)
     }
 
     // MARK: - Point Analysis

@@ -32,6 +32,7 @@ disabled_rules:
   - void_return
   - trailing_newline
   - non_optional_string_data_conversion
+  - sorted_imports  # swift-format OrderedImports owns import order
 
 opt_in_rules:
   - array_init
@@ -67,7 +68,6 @@ opt_in_rules:
   - redundant_type_annotation
   - shorthand_optional_binding
   - sorted_first_last
-  - sorted_imports
   - static_operator
   - superfluous_else
   - toggle_bool
@@ -87,6 +87,7 @@ line_length:
   error: 200
   ignores_comments: true
   ignores_urls: true
+  ignores_interpolated_strings: true
   ignores_function_declarations: false
 
 function_body_length:

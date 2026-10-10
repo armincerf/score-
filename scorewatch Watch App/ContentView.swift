@@ -8,8 +8,8 @@
 import SwiftUI
 
 struct ContentView: View {
-    @EnvironmentObject var session: WatchSessionManager
-    @State private var selection = 1 // Default to center (scoring) screen
+    @Environment(WatchSessionManager.self) private var session
+    @State private var selection = 1  // Default to center (scoring) screen
 
     var body: some View {
         Group {
@@ -40,7 +40,7 @@ struct ContentView: View {
 // MARK: - Waiting View
 
 struct WaitingView: View {
-    @EnvironmentObject var session: WatchSessionManager
+    @Environment(WatchSessionManager.self) private var session
 
     var body: some View {
         VStack(spacing: 16) {
@@ -75,7 +75,7 @@ struct WaitingView: View {
 // MARK: - Screen 0: End Game Controls (Swipe Left)
 
 struct EndGameView: View {
-    @EnvironmentObject var session: WatchSessionManager
+    @Environment(WatchSessionManager.self) private var session
     @State private var endGameTrigger = 0
     @State private var endMatchTrigger = 0
 
@@ -137,7 +137,7 @@ struct EndGameView: View {
 // MARK: - Screen 1: Scoring (Center/Default)
 
 struct ScoreControlView: View {
-    @EnvironmentObject var session: WatchSessionManager
+    @Environment(WatchSessionManager.self) private var session
     @State private var scoreTrigger = 0
 
     private var playerOneLabel: String {
@@ -149,7 +149,7 @@ struct ScoreControlView: View {
     }
 
     var body: some View {
-        GeometryReader { geometry in
+        GeometryReader { _ in
             ZStack {
                 VStack(spacing: 0) {
                     // Player 1 Button - TOP HALF
@@ -241,7 +241,7 @@ struct ScoreControlView: View {
 // MARK: - Screen 2: Highlight & Details (Swipe Right)
 
 struct HighlightDetailsView: View {
-    @EnvironmentObject var session: WatchSessionManager
+    @Environment(WatchSessionManager.self) private var session
     @State private var highlightTrigger = 0
 
     var body: some View {
@@ -313,8 +313,10 @@ struct HighlightDetailsView: View {
                 HStack {
                     Image(systemName: "star.fill")
                         .foregroundColor(.yellow)
-                    Text("\(session.scoreState.totalHighlightsInMatch) highlight\(session.scoreState.totalHighlightsInMatch == 1 ? "" : "s")")
-                        .font(.caption)
+                    Text(
+                        "\(session.scoreState.totalHighlightsInMatch) highlight\(session.scoreState.totalHighlightsInMatch == 1 ? "" : "s")"
+                    )
+                    .font(.caption)
                 }
             }
 
@@ -357,5 +359,5 @@ struct HighlightButtonStyle: ButtonStyle {
 
 #Preview {
     ContentView()
-        .environmentObject(WatchSessionManager())
+        .environment(WatchSessionManager())
 }

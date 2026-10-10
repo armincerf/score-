@@ -11,16 +11,20 @@ import Testing
 
 @Suite("ServingLogic")
 struct ServingLogicTests {
-    @Test("Serve changes every two points before deuce", arguments: [
-        (0, 0, 1), (1, 0, 1), (2, 0, 2), (1, 2, 2), (2, 2, 1), (4, 1, 2), (3, 3, 1), (9, 0, 1),
-    ])
+    @Test(
+        "Serve changes every two points before deuce",
+        arguments: [
+            (0, 0, 1), (1, 0, 1), (2, 0, 2), (1, 2, 2), (2, 2, 1), (4, 1, 2), (3, 3, 1), (9, 0, 1),
+        ])
     func serverBeforeDeuce(p1: Int, p2: Int, expected: Int) {
         #expect(ServingLogic.calculateCurrentServer(firstServer: 1, playerOneScore: p1, playerTwoScore: p2) == expected)
     }
 
-    @Test("Serve changes every point from 10-10", arguments: [
-        (10, 10, 1), (11, 10, 2), (11, 11, 1), (12, 11, 2), (12, 12, 1), (10, 12, 1),
-    ])
+    @Test(
+        "Serve changes every point from 10-10",
+        arguments: [
+            (10, 10, 1), (11, 10, 2), (11, 11, 1), (12, 11, 2), (12, 12, 1), (10, 12, 1),
+        ])
     func serverInDeuce(p1: Int, p2: Int, expected: Int) {
         #expect(ServingLogic.calculateCurrentServer(firstServer: 1, playerOneScore: p1, playerTwoScore: p2) == expected)
     }
@@ -44,8 +48,11 @@ struct ServingLogicTests {
     @Test("Game first server alternates between games")
     func gameFirstServerAlternates() {
         let game = GameResult(playerOneScore: 11, playerTwoScore: 5, winner: 1, firstServer: 1)
-        #expect(ServingLogic.determineGameFirstServer(currentGameNumber: 0, previousGames: [], matchFirstServer: 2) == 2)
-        #expect(ServingLogic.determineGameFirstServer(currentGameNumber: 1, previousGames: [game], matchFirstServer: 1) == 2)
+        #expect(
+            ServingLogic.determineGameFirstServer(currentGameNumber: 0, previousGames: [], matchFirstServer: 2) == 2)
+        #expect(
+            ServingLogic.determineGameFirstServer(currentGameNumber: 1, previousGames: [game], matchFirstServer: 1) == 2
+        )
     }
 
     @Test("Point on serve detection")

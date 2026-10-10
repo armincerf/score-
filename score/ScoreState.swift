@@ -11,13 +11,16 @@ import Foundation
 // MARK: - Point Event (for video timestamp tracking)
 
 nonisolated struct PointEvent: Codable, Sendable {
-    let player: Int              // 1 or 2
-    let timestamp: Date          // When point was scored
-    var isHighlight: Bool        // Was this marked as a highlight?
+    let player: Int  // 1 or 2
+    let timestamp: Date  // When point was scored
+    var isHighlight: Bool  // Was this marked as a highlight?
     let videoTimestamp: Double?  // Seconds from video start (set by iOS only)
-    var wasServing: Bool         // Was the scoring player serving?
+    var wasServing: Bool  // Was the scoring player serving?
 
-    init(player: Int, timestamp: Date = Date(), isHighlight: Bool = false, videoTimestamp: Double? = nil, wasServing: Bool = false) {
+    init(
+        player: Int, timestamp: Date = Date(), isHighlight: Bool = false, videoTimestamp: Double? = nil,
+        wasServing: Bool = false
+    ) {
         self.player = player
         self.timestamp = timestamp
         self.isHighlight = isHighlight
@@ -30,10 +33,10 @@ nonisolated struct PointEvent: Codable, Sendable {
 
 nonisolated struct HighlightClip: Codable, Identifiable, Sendable {
     let id: UUID
-    let startTimestamp: Double   // Video time when clip starts (last score before highlight)
-    let endTimestamp: Double     // Video time when highlight button was pressed
-    let player: Int?             // Player responsible for the highlight (nil if pending)
-    let gameNumber: Int          // Which game this highlight belongs to
+    let startTimestamp: Double  // Video time when clip starts (last score before highlight)
+    let endTimestamp: Double  // Video time when highlight button was pressed
+    let player: Int?  // Player responsible for the highlight (nil if pending)
+    let gameNumber: Int  // Which game this highlight belongs to
 
     init(id: UUID = UUID(), startTimestamp: Double, endTimestamp: Double, player: Int? = nil, gameNumber: Int) {
         self.id = id
@@ -49,13 +52,16 @@ nonisolated struct HighlightClip: Codable, Identifiable, Sendable {
 nonisolated struct GameResult: Codable, Sendable {
     let playerOneScore: Int
     let playerTwoScore: Int
-    let winner: Int // 1 or 2
+    let winner: Int  // 1 or 2
     let timestamp: Date
     let points: [PointEvent]  // All points scored in this game
     let duration: TimeInterval?  // Game duration in seconds
     let firstServer: Int  // Who served first in this game (1 or 2)
 
-    init(playerOneScore: Int, playerTwoScore: Int, winner: Int, timestamp: Date = Date(), points: [PointEvent] = [], duration: TimeInterval? = nil, firstServer: Int = 1) {
+    init(
+        playerOneScore: Int, playerTwoScore: Int, winner: Int, timestamp: Date = Date(), points: [PointEvent] = [],
+        duration: TimeInterval? = nil, firstServer: Int = 1
+    ) {
         self.playerOneScore = playerOneScore
         self.playerTwoScore = playerTwoScore
         self.winner = winner
@@ -75,8 +81,9 @@ nonisolated struct GameResult: Codable, Sendable {
         var validIntervals = 0
 
         for i in 1..<points.count {
-            if let prevTime = points[i-1].videoTimestamp,
-               let currTime = points[i].videoTimestamp {
+            if let prevTime = points[i - 1].videoTimestamp,
+                let currTime = points[i].videoTimestamp
+            {
                 totalTime += (currTime - prevTime)
                 validIntervals += 1
             }
@@ -102,14 +109,18 @@ nonisolated struct MatchResult: Codable, Sendable {
     let name: String?  // Match name (e.g., "John vs Jane")
     let playerOneGames: Int
     let playerTwoGames: Int
-    let winner: Int // 1 or 2
+    let winner: Int  // 1 or 2
     let games: [GameResult]
     let timestamp: Date
     let fullVideoURL: String?  // Path to full unedited video
     let highlightVideoURL: String?  // Path to generated highlight reel
     let duration: TimeInterval?  // Total match duration in seconds
 
-    init(name: String? = nil, playerOneGames: Int, playerTwoGames: Int, winner: Int, games: [GameResult], timestamp: Date = Date(), fullVideoURL: String? = nil, highlightVideoURL: String? = nil, duration: TimeInterval? = nil) {
+    init(
+        name: String? = nil, playerOneGames: Int, playerTwoGames: Int, winner: Int, games: [GameResult],
+        timestamp: Date = Date(), fullVideoURL: String? = nil, highlightVideoURL: String? = nil,
+        duration: TimeInterval? = nil
+    ) {
         self.name = name
         self.playerOneGames = playerOneGames
         self.playerTwoGames = playerTwoGames
@@ -124,13 +135,13 @@ nonisolated struct MatchResult: Codable, Sendable {
     // MARK: - Statistics
 
     var averageGameTime: TimeInterval? {
-        let durations = games.compactMap { $0.duration }
+        let durations = games.compactMap(\.duration)
         guard !durations.isEmpty else { return nil }
         return durations.reduce(0, +) / Double(durations.count)
     }
 
     var averagePointTime: TimeInterval? {
-        let pointTimes = games.compactMap { $0.averagePointTime }
+        let pointTimes = games.compactMap(\.averagePointTime)
         guard !pointTimes.isEmpty else { return nil }
         return pointTimes.reduce(0, +) / Double(pointTimes.count)
     }
@@ -152,12 +163,13 @@ nonisolated struct MatchResult: Codable, Sendable {
     var serveWinPercentageP1: Double? {
         // Calculate total serves for P1 across all games
         let totalServes = games.reduce(0) { sum, game in
-            sum + ServingLogic.calculateTotalServes(
-                forPlayer: 1,
-                firstServer: game.firstServer,
-                finalP1Score: game.playerOneScore,
-                finalP2Score: game.playerTwoScore
-            )
+            sum
+                + ServingLogic.calculateTotalServes(
+                    forPlayer: 1,
+                    firstServer: game.firstServer,
+                    finalP1Score: game.playerOneScore,
+                    finalP2Score: game.playerTwoScore
+                )
         }
 
         guard totalServes > 0 else { return nil }
@@ -167,12 +179,13 @@ nonisolated struct MatchResult: Codable, Sendable {
     var serveWinPercentageP2: Double? {
         // Calculate total serves for P2 across all games
         let totalServes = games.reduce(0) { sum, game in
-            sum + ServingLogic.calculateTotalServes(
-                forPlayer: 2,
-                firstServer: game.firstServer,
-                finalP1Score: game.playerOneScore,
-                finalP2Score: game.playerTwoScore
-            )
+            sum
+                + ServingLogic.calculateTotalServes(
+                    forPlayer: 2,
+                    firstServer: game.firstServer,
+                    finalP1Score: game.playerOneScore,
+                    finalP2Score: game.playerTwoScore
+                )
         }
 
         guard totalServes > 0 else { return nil }
@@ -271,7 +284,7 @@ nonisolated struct ScoreState: Codable, Sendable {
             "playerOneGames": playerOneGames,
             "playerTwoGames": playerTwoGames,
             "isRecording": isRecording,
-            "servingPlayer": servingPlayer
+            "servingPlayer": servingPlayer,
         ]
 
         // Encode complex types to Data
