@@ -10,8 +10,7 @@ PROJECT      := score.xcodeproj
 SCHEME       := score
 WATCH_SCHEME := scorewatch Watch App
 SIM_NAME     ?= iPhone 17 Pro
-SIM_OS       ?= latest
-DEST_SIM     := platform=iOS Simulator,name=$(SIM_NAME),OS=$(SIM_OS)
+# scripts/simulator-udid.sh picks (or creates) $(SIM_NAME) on the newest installed iOS runtime.
 DEST_GENERIC := generic/platform=iOS Simulator
 DEST_WATCH   := generic/platform=watchOS Simulator
 BUILD_DIR    := .build
@@ -46,12 +45,13 @@ build-watch: ## Build the watch app on its own
 
 test: ## Run unit tests on the simulator (T=Suite/testName to filter)
 	@mkdir -p $(LOG_DIR) $(dir $(RESULT)); rm -rf $(RESULT)
-	set -o pipefail; xcodebuild test -project $(PROJECT) -scheme "$(SCHEME)" -destination '$(DEST_SIM)' \
+	udid=$$(scripts/simulator-udid.sh "$(SIM_NAME)"); \
+	xcodebuild test -project $(PROJECT) -scheme "$(SCHEME)" -destination "platform=iOS Simulator,id=$$udid" \
 	  -resultBundlePath $(RESULT) CODE_SIGNING_ALLOWED=NO $(ONLY) 2>&1 | tee $(LOG_DIR)/test.log | $(XCB)
+	@scripts/test-summary.sh $(RESULT) || true
 
 test-summary: ## Print pass/fail summary from the last test run
-	@xcrun xcresulttool get test-results summary --path $(RESULT) --compact 2>/dev/null \
-	  | python3 -I -c 'import json,sys; d=json.load(sys.stdin); print(f"{d.get(\"result\")}: {d.get(\"passedTests\")} passed, {d.get(\"failedTests\")} failed, {d.get(\"skippedTests\")} skipped")'
+	@scripts/test-summary.sh $(RESULT)
 
 lint: ## SwiftLint (strict) + swift-format lint
 	swiftlint lint --strict --quiet
