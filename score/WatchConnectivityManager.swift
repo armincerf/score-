@@ -172,7 +172,10 @@ class WatchConnectivityManager: NSObject {
         do {
             guard let match = try eventStore.getMatch(id: matchId) else { return }
             let events = try eventStore.getEvents(matchId: matchId)
-            scoreState = try stateProjector.project(events: events, matchMetadata: match)
+            var projected = try stateProjector.project(events: events, matchMetadata: match)
+            // A projection covers the active match only; keep the finished matches loaded at launch
+            projected.matchHistory = scoreState.matchHistory
+            scoreState = projected
             syncCaches(with: scoreState)
         } catch {
             Log.match.error("Error refreshing state: \(error)")
@@ -1004,7 +1007,10 @@ class WatchConnectivityManager: NSObject {
         )
         try eventStore.append(event: event)
 
+        // History entries are dated by match start, here and when they are reloaded at launch
+        var startTimestamp = Date()
         if let match = try eventStore.getMatch(id: matchId) {
+            startTimestamp = match.startTimestamp
             match.isActive = false
             match.endTimestamp = Date()
             match.playerOneGames = scoreState.playerOneGames
@@ -1025,7 +1031,7 @@ class WatchConnectivityManager: NSObject {
             playerTwoGames: scoreState.playerTwoGames,
             winner: winner,
             games: scoreState.currentMatchGames,
-            timestamp: Date(),
+            timestamp: startTimestamp,
             fullVideoURL: fullVideoURLString,
             highlightVideoURL: highlightVideoURLString,
             duration: recordingDuration
@@ -1116,19 +1122,25 @@ class WatchConnectivityManager: NSObject {
             guard let source = VideoStore.resolve(reference) else { return reference }
             let current = VideoStore.storedReference(for: source)
             guard current != source.lastPathComponent else { return current }  // already in the store
-            guard FileManager.default.fileExists(atPath: source.path) else { return reference }
+            let fileManager = FileManager.default
             let destination = VideoStore.fileURL(matchId: match.id, kind: kind)
-            do {
-                // A store file for this match and kind is the canonical copy; only move when there is none
-                if !FileManager.default.fileExists(atPath: destination.path) {
-                    try FileManager.default.moveItem(at: source, to: destination)
+            // A store file for this match and kind is the canonical copy (e.g. moved on an earlier launch whose
+            // save failed). Otherwise take the legacy file at its recorded path or, because an app update can
+            // move the container, under the same name in the current tmp/.
+            if !fileManager.fileExists(atPath: destination.path) {
+                let candidates = [source, URL.temporaryDirectory.appending(path: source.lastPathComponent)]
+                guard let legacy = candidates.first(where: { fileManager.fileExists(atPath: $0.path) }) else {
+                    return reference
                 }
-                Log.match.info("Moved legacy video \(source.lastPathComponent) to \(destination.lastPathComponent)")
-                return VideoStore.storedReference(for: destination)
-            } catch {
-                Log.match.warning("Could not move legacy video \(source.lastPathComponent): \(error)")
-                return reference
+                do {
+                    try fileManager.moveItem(at: legacy, to: destination)
+                    Log.match.info("Moved legacy video \(legacy.lastPathComponent) to \(destination.lastPathComponent)")
+                } catch {
+                    Log.match.warning("Could not move legacy video \(legacy.lastPathComponent): \(error)")
+                    return reference
+                }
             }
+            return VideoStore.storedReference(for: destination)
         }
 
         let full = migrated(match.fullVideoURL, kind: .full)
