@@ -38,3 +38,6 @@ xcuserdata/
 .claude/skills/device-interaction/
 .claude/skills/audit-xcode-security-settings/
 .claude/skills/.xcode-skills-version
+
+# Serena MCP workspace
+.serena/
