@@ -2,26 +2,32 @@
 //  MockVideoGenerator.swift
 //  score
 //
-//  Generate mock video for simulator testing
+//  Generates a synthetic match video so the simulator (which has no camera)
+//  can exercise the export and highlight pipeline end to end.
 //
 
 import AVFoundation
+import CoreVideo
 import UIKit
-import CoreImage
+import os
 
-class MockVideoGenerator {
-    static func generateMockVideo(duration: TimeInterval = 60.0) -> URL? {
-        let tempDir = FileManager.default.temporaryDirectory
-        let fileName = "mock_match_\(Date().timeIntervalSince1970).mov"
-        let fileURL = tempDir.appendingPathComponent(fileName)
+nonisolated enum MockVideoGenerator {
+    private static let videoSize = CGSize(width: 1280, height: 720)
+    private static let fps: Int32 = 30
 
-        // Remove old file if exists
+    /// Renders `duration` seconds of placeholder frames into a temporary .mov file.
+    /// Runs off the main actor; returns nil if writing fails.
+    @concurrent
+    static func generateMockVideo(duration: TimeInterval = 60.0) async -> URL? {
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mock_match_\(Date().timeIntervalSince1970).mov")
         try? FileManager.default.removeItem(at: fileURL)
 
-        let videoSize = CGSize(width: 1280, height: 720)
-
-        guard let videoWriter = try? AVAssetWriter(outputURL: fileURL, fileType: .mov) else {
-            print("[Mock] Failed to create video writer")
+        let writer: AVAssetWriter
+        do {
+            writer = try AVAssetWriter(outputURL: fileURL, fileType: .mov)
+        } catch {
+            Log.video.error("Mock: failed to create video writer: \(error)")
             return nil
         }
 
@@ -30,86 +36,62 @@ class MockVideoGenerator {
             AVVideoWidthKey: videoSize.width,
             AVVideoHeightKey: videoSize.height,
             AVVideoCompressionPropertiesKey: [
-                AVVideoAverageBitRateKey: 6000000,
-                AVVideoMaxKeyFrameIntervalKey: 30
-            ]
+                AVVideoAverageBitRateKey: 6_000_000,
+                AVVideoMaxKeyFrameIntervalKey: 30,
+            ],
         ]
 
-        let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
-        videoInput.expectsMediaDataInRealTime = false
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
+        let receiver = writer.inputPixelBufferReceiver(for: input, pixelBufferAttributes: nil)
 
-        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
-            assetWriterInput: videoInput,
-            sourcePixelBufferAttributes: [
-                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32ARGB,
-                kCVPixelBufferWidthKey as String: videoSize.width,
-                kCVPixelBufferHeightKey as String: videoSize.height
-            ]
-        )
+        do {
+            try writer.start()
+        } catch {
+            Log.video.error("Mock: failed to start writer: \(error)")
+            return nil
+        }
+        writer.startSession(atSourceTime: .zero)
 
-        videoWriter.add(videoInput)
-
-        videoWriter.startWriting()
-        videoWriter.startSession(atSourceTime: .zero)
-
-        let fps: Int32 = 30
         let totalFrames = Int(duration * Double(fps))
-
-        var frameCount: Int64 = 0
-
-        print("[Mock] Generating \(totalFrames) frames...")
+        Log.video.debug("Mock: generating \(totalFrames) frames...")
 
         for frame in 0..<totalFrames {
-            autoreleasepool {
-                let currentTime = Double(frame) / Double(fps)
-
-                while !videoInput.isReadyForMoreMediaData {
-                    Thread.sleep(forTimeInterval: 0.01)
-                }
-
-                if let buffer = createFrame(size: videoSize, time: currentTime, frameNumber: frame) {
-                    let presentationTime = CMTime(value: frameCount, timescale: CMTimeScale(fps))
-                    adaptor.append(buffer, withPresentationTime: presentationTime)
-                    frameCount += 1
-                }
+            let currentTime = Double(frame) / Double(fps)
+            guard let buffer = createFrame(time: currentTime) else { continue }
+            let presentationTime = CMTime(value: Int64(frame), timescale: fps)
+            do {
+                try await receiver.append(CVReadOnlyPixelBuffer(unsafeBuffer: buffer), with: presentationTime)
+            } catch {
+                Log.video.error("Mock: failed to append frame \(frame): \(error)")
+                break
             }
         }
 
-        videoInput.markAsFinished()
+        receiver.finish()
+        await writer.finishWriting()
 
-        let semaphore = DispatchSemaphore(value: 0)
-        videoWriter.finishWriting {
-            semaphore.signal()
-        }
-        semaphore.wait()
-
-        if videoWriter.status == .completed {
-            print("[Mock] Video generated successfully: \(fileURL.lastPathComponent)")
-            print("[Mock] Duration: \(duration)s, Frames: \(totalFrames)")
-            return fileURL
-        } else {
-            print("[Mock] Video generation failed: \(String(describing: videoWriter.error))")
+        guard writer.status == .completed else {
+            Log.video.error("Mock: video generation failed: \(String(describing: writer.error))")
             return nil
         }
+        Log.video.info("Mock: video generated (\(Int(duration))s, \(totalFrames) frames): \(fileURL.lastPathComponent)")
+        return fileURL
     }
 
-    private static func createFrame(size: CGSize, time: TimeInterval, frameNumber: Int) -> CVPixelBuffer? {
+    private static func createFrame(time: TimeInterval) -> CVPixelBuffer? {
         var pixelBuffer: CVPixelBuffer?
-
         let options: [String: Any] = [
             kCVPixelBufferCGImageCompatibilityKey as String: true,
-            kCVPixelBufferCGBitmapContextCompatibilityKey as String: true
+            kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
         ]
-
         let status = CVPixelBufferCreate(
             kCFAllocatorDefault,
-            Int(size.width),
-            Int(size.height),
+            Int(videoSize.width),
+            Int(videoSize.height),
             kCVPixelFormatType_32ARGB,
             options as CFDictionary,
             &pixelBuffer
         )
-
         guard status == kCVReturnSuccess, let buffer = pixelBuffer else {
             return nil
         }
@@ -119,8 +101,8 @@ class MockVideoGenerator {
 
         guard let context = CGContext(
             data: CVPixelBufferGetBaseAddress(buffer),
-            width: Int(size.width),
-            height: Int(size.height),
+            width: Int(videoSize.width),
+            height: Int(videoSize.height),
             bitsPerComponent: 8,
             bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
             space: CGColorSpaceCreateDeviceRGB(),
@@ -129,52 +111,45 @@ class MockVideoGenerator {
             return nil
         }
 
-        // Create gradient background that changes over time
-        let hue = (time / 10.0).truncatingRemainder(dividingBy: 1.0)
-        let backgroundColor = UIColor(hue: hue, saturation: 0.3, brightness: 0.2, alpha: 1.0)
-        context.setFillColor(backgroundColor.cgColor)
-        context.fill(CGRect(origin: .zero, size: size))
+        // UIKit string drawing needs a current context; push ours for the duration of the draw.
+        UIGraphicsPushContext(context)
+        defer { UIGraphicsPopContext() }
 
-        // Draw court-like lines
+        // Gradient background that drifts over time
+        let hue = (time / 10.0).truncatingRemainder(dividingBy: 1.0)
+        context.setFillColor(UIColor(hue: hue, saturation: 0.3, brightness: 0.2, alpha: 1.0).cgColor)
+        context.fill(CGRect(origin: .zero, size: videoSize))
+
+        // Court centre line
         context.setStrokeColor(UIColor.white.withAlphaComponent(0.3).cgColor)
         context.setLineWidth(4)
-
-        // Center line
-        context.move(to: CGPoint(x: size.width / 2, y: 0))
-        context.addLine(to: CGPoint(x: size.width / 2, y: size.height))
+        context.move(to: CGPoint(x: videoSize.width / 2, y: 0))
+        context.addLine(to: CGPoint(x: videoSize.width / 2, y: videoSize.height))
         context.strokePath()
-
-        // Draw timestamp
-        let minutes = Int(time) / 60
-        let seconds = Int(time) % 60
-        let timeString = String(format: "%d:%02d", minutes, seconds)
 
         let paragraphStyle = NSMutableParagraphStyle()
         paragraphStyle.alignment = .center
 
-        let attributes: [NSAttributedString.Key: Any] = [
+        let minutes = Int(time) / 60
+        let seconds = Int(time) % 60
+        let timeString = String(format: "%d:%02d", minutes, seconds)
+        let timeAttributes: [NSAttributedString.Key: Any] = [
             .font: UIFont.monospacedSystemFont(ofSize: 80, weight: .bold),
             .foregroundColor: UIColor.white,
             .paragraphStyle: paragraphStyle,
             .strokeColor: UIColor.black,
-            .strokeWidth: -3
+            .strokeWidth: -3,
         ]
+        NSAttributedString(string: timeString, attributes: timeAttributes)
+            .draw(in: CGRect(x: 0, y: videoSize.height / 2 - 50, width: videoSize.width, height: 100))
 
-        let attrString = NSAttributedString(string: timeString, attributes: attributes)
-        let textRect = CGRect(x: 0, y: size.height / 2 - 50, width: size.width, height: 100)
-
-        attrString.draw(in: textRect)
-
-        // Draw "MOCK VIDEO" label
         let labelAttributes: [NSAttributedString.Key: Any] = [
             .font: UIFont.systemFont(ofSize: 24, weight: .semibold),
             .foregroundColor: UIColor.white.withAlphaComponent(0.6),
-            .paragraphStyle: paragraphStyle
+            .paragraphStyle: paragraphStyle,
         ]
-
-        let label = NSAttributedString(string: "MOCK MATCH VIDEO", attributes: labelAttributes)
-        let labelRect = CGRect(x: 0, y: 40, width: size.width, height: 40)
-        label.draw(in: labelRect)
+        NSAttributedString(string: "MOCK MATCH VIDEO", attributes: labelAttributes)
+            .draw(in: CGRect(x: 0, y: 40, width: videoSize.width, height: 40))
 
         return buffer
     }

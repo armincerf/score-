@@ -8,10 +8,10 @@
 import SwiftUI
 import FoundationModels
 import SwiftData
+import os
 
 // MARK: - Match Summary Card View
 
-@available(iOS 26.0, *)
 struct MatchSummaryCardView: View {
     let analysis: MatchAnalysis
     let playerOneName: String
@@ -208,7 +208,6 @@ struct MatchSummaryUnavailableView: View {
 
 // MARK: - Container View with State Management
 
-@available(iOS 26.0, *)
 struct MatchSummaryContainer: View {
     @StateObject private var summaryService = MatchSummaryService()
     @Environment(\.modelContext) private var modelContext
@@ -273,10 +272,10 @@ struct MatchSummaryContainer: View {
                let summaryData = storedMatch.aiSummaryData {
                 let codableSummary = try JSONDecoder().decode(MatchAnalysisCodable.self, from: summaryData)
                 cachedSummary = codableSummary.toMatchAnalysis()
-                print("[MatchSummary] 📖 Loaded cached AI summary from database")
+                Log.ai.info("📖 Loaded cached AI summary from database")
             }
         } catch {
-            print("[MatchSummary] ⚠️ Failed to load cached summary: \(error.localizedDescription)")
+            Log.ai.error("⚠️ Failed to load cached summary: \(error.localizedDescription)")
         }
     }
 
@@ -286,51 +285,5 @@ struct MatchSummaryContainer: View {
         guard components.count == 2 else { return "Player \(player)" }
         return player == 1 ? components[0].trimmingCharacters(in: .whitespaces)
                            : components[1].trimmingCharacters(in: .whitespaces)
-    }
-}
-
-// MARK: - Fallback Container for older iOS
-
-struct MatchSummaryFallbackContainer: View {
-    let matchResult: MatchResult
-    
-    var body: some View {
-        VStack(spacing: 12) {
-            HStack {
-                Image(systemName: "info.circle")
-                    .foregroundStyle(.blue)
-                Text("Match Summary")
-                    .font(.headline)
-                Spacer()
-            }
-            
-            Text(generateBasicSummary())
-                .font(.body)
-        }
-        .padding()
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-    }
-    
-    private func generateBasicSummary() -> String {
-        guard let name = matchResult.name else {
-            return "Match completed \(matchResult.playerOneGames)-\(matchResult.playerTwoGames)"
-        }
-        
-        let components = name.components(separatedBy: " vs ")
-        guard components.count == 2 else {
-            return "Match completed \(matchResult.playerOneGames)-\(matchResult.playerTwoGames)"
-        }
-        
-        let p1 = components[0].trimmingCharacters(in: .whitespaces)
-        let p2 = components[1].trimmingCharacters(in: .whitespaces)
-        
-        return MatchSummaryFallback.generateBasicSummary(
-            playerOneName: p1,
-            playerTwoName: p2,
-            winner: matchResult.winner,
-            playerOneGames: matchResult.playerOneGames,
-            playerTwoGames: matchResult.playerTwoGames
-        )
     }
 }

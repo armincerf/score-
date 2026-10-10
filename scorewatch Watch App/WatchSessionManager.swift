@@ -9,9 +9,10 @@
 import Foundation
 import Combine
 @preconcurrency import WatchConnectivity
+import os
 
 /// Sendable wrapper for WCSession message data
-struct MessageData: Sendable {
+nonisolated struct MessageData: Sendable {
     let highlightConfirmed: Bool?
     let highlightCount: Int?
     let hasPendingHighlight: Bool?
@@ -128,7 +129,7 @@ final class WatchSessionManager: NSObject, ObservableObject {
 
         if session.isReachable {
             session.sendMessage(message, replyHandler: nil) { error in
-                print("[Watch] Error sending command: \(error.localizedDescription)")
+                Log.session.error("Error sending command: \(error.localizedDescription)")
             }
         } else {
             // Phone not immediately reachable - queue via context
@@ -136,7 +137,7 @@ final class WatchSessionManager: NSObject, ObservableObject {
             do {
                 try session.updateApplicationContext(message)
             } catch {
-                print("[Watch] Error updating context: \(error.localizedDescription)")
+                Log.session.error("Error updating context: \(error.localizedDescription)")
             }
         }
     }
@@ -148,14 +149,14 @@ final class WatchSessionManager: NSObject, ObservableObject {
 
         if session.isReachable {
             session.sendMessage(message, replyHandler: nil) { error in
-                print("[Watch] Error sending: \(error.localizedDescription)")
+                Log.session.error("Error sending: \(error.localizedDescription)")
             }
         }
 
         do {
             try session.updateApplicationContext(message)
         } catch {
-            print("[Watch] Error updating context: \(error.localizedDescription)")
+            Log.session.error("Error updating context: \(error.localizedDescription)")
         }
     }
 
@@ -174,7 +175,7 @@ final class WatchSessionManager: NSObject, ObservableObject {
         // Timeout after 2 seconds in case iOS doesn't respond
         startPendingTimeout()
 
-        print("[Watch] P1 scored - waiting for iOS confirmation")
+        Log.session.debug("P1 scored - waiting for iOS confirmation")
     }
 
     func incrementPlayer2() {
@@ -190,7 +191,7 @@ final class WatchSessionManager: NSObject, ObservableObject {
         // Timeout after 2 seconds in case iOS doesn't respond
         startPendingTimeout()
 
-        print("[Watch] P2 scored - waiting for iOS confirmation")
+        Log.session.debug("P2 scored - waiting for iOS confirmation")
     }
 
     private func startPendingTimeout() {
@@ -201,7 +202,7 @@ final class WatchSessionManager: NSObject, ObservableObject {
         pendingTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: false) { [weak self] _ in
             DispatchQueue.main.async {
                 self?.clearPendingState()
-                print("[Watch] ⚠️ Timeout waiting for iOS response")
+                Log.session.warning("⚠️ Timeout waiting for iOS response")
             }
         }
     }
@@ -217,7 +218,7 @@ final class WatchSessionManager: NSObject, ObservableObject {
     func markHighlight() {
         // Only mark if we're recording
         guard scoreState.isRecording else {
-            print("[Watch] Not recording - highlight ignored")
+            Log.session.debug("Not recording - highlight ignored")
             return
         }
 
@@ -233,7 +234,7 @@ final class WatchSessionManager: NSObject, ObservableObject {
         // Timeout after 2 seconds in case iOS doesn't respond
         startPendingTimeout()
 
-        print("[Watch] ⭐ HIGHLIGHT MARKED! Waiting for iOS confirmation")
+        Log.session.info("⭐ HIGHLIGHT MARKED! Waiting for iOS confirmation")
     }
 
     // MARK: - Game/Match Actions (optional - can also be done from phone)
@@ -265,9 +266,9 @@ extension WatchSessionManager: WCSessionDelegate {
                 self.sendCommand("requestSync")
             }
         }
-        print("[Watch] Session activated: \(activationState.rawValue), Reachable: \(isReachable)")
+        Log.session.info("Session activated: \(activationState.rawValue), Reachable: \(isReachable)")
         if isActivated {
-            print("[Watch] Sent initial sync request to phone")
+            Log.session.debug("Sent initial sync request to phone")
         }
     }
 
@@ -279,7 +280,7 @@ extension WatchSessionManager: WCSessionDelegate {
                 self.sendCommand("requestSync")
             }
         }
-        print("[Watch] Reachability: \(isReachable)")
+        Log.session.info("Reachability: \(isReachable)")
     }
 
     // Receive messages from iPhone
@@ -329,7 +330,7 @@ extension WatchSessionManager: WCSessionDelegate {
             if let newCount = messageData.highlightCount {
                 self.highlightCount = newCount
             }
-            print("[Watch] ⭐ Highlight confirmed by phone")
+            Log.session.info("⭐ Highlight confirmed by phone")
         }
 
         // Check for highlight count sync
@@ -374,6 +375,6 @@ extension WatchSessionManager: WCSessionDelegate {
         }
 
         self.scoreState = newState
-        print("[Watch] State updated: P1=\(newState.playerOneScore) P2=\(newState.playerTwoScore) Recording=\(newState.isRecording)")
+        Log.session.debug("State updated: P1=\(newState.playerOneScore) P2=\(newState.playerTwoScore) Recording=\(newState.isRecording)")
     }
 }

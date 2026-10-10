@@ -9,6 +9,7 @@ import Foundation
 @preconcurrency import AVFoundation
 import UIKit
 import Combine
+import os
 
 @MainActor
 class CameraPreviewManager: NSObject, ObservableObject {
@@ -45,7 +46,7 @@ class CameraPreviewManager: NSObject, ObservableObject {
         )
 
         availableDeviceTypes = discoverySession.devices.map { $0.deviceType }
-        print("[CameraPreview] Available device types: \(availableDeviceTypes.map { "\($0.rawValue)" })")
+        Log.video.debug("Available device types: \(self.availableDeviceTypes.map { "\($0.rawValue)" })")
     }
 
     // MARK: - Permissions
@@ -57,7 +58,7 @@ class CameraPreviewManager: NSObject, ObservableObject {
         case .notDetermined:
             AVCaptureDevice.requestAccess(for: .video) { _ in }
         default:
-            print("[CameraPreview] Camera permission denied")
+            Log.video.warning("Camera permission denied")
         }
     }
 
@@ -93,7 +94,7 @@ class CameraPreviewManager: NSObject, ObservableObject {
         )
 
         guard let device = discoverySession.devices.first else {
-            print("[CameraPreview] Device type \(deviceType.displayName) not available")
+            Log.video.warning("Device type \(deviceType.displayName) not available")
             return
         }
 
@@ -111,10 +112,10 @@ class CameraPreviewManager: NSObject, ObservableObject {
                 session.addInput(input)
                 currentInput = input
                 currentDevice = device
-                print("[CameraPreview] Switched to \(deviceType.displayName)")
+                Log.video.debug("Switched to \(deviceType.displayName)")
             }
         } catch {
-            print("[CameraPreview] Error switching camera: \(error)")
+            Log.video.error("Error switching camera: \(error)")
         }
 
         session.commitConfiguration()
@@ -124,7 +125,7 @@ class CameraPreviewManager: NSObject, ObservableObject {
 
     func updateQuality(_ quality: VideoQualityPreset) {
         guard session.canSetSessionPreset(quality.avPreset) else {
-            print("[CameraPreview] Preset \(quality.displayName) not supported")
+            Log.video.warning("Preset \(quality.displayName) not supported")
             return
         }
 
@@ -132,7 +133,7 @@ class CameraPreviewManager: NSObject, ObservableObject {
         session.sessionPreset = quality.avPreset
         session.commitConfiguration()
 
-        print("[CameraPreview] Updated quality to \(quality.displayName)")
+        Log.video.info("Updated quality to \(quality.displayName)")
     }
 }
 

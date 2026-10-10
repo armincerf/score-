@@ -7,6 +7,7 @@
 
 import Foundation
 import SwiftData
+import os
 
 class UserPreferencesService {
     private let modelContext: ModelContext
@@ -30,11 +31,11 @@ class UserPreferencesService {
                 let newPreferences = UserPreferences()
                 modelContext.insert(newPreferences)
                 try modelContext.save()
-                print("[Preferences] Created default preferences")
+                Log.store.info("Created default preferences")
                 return newPreferences
             }
         } catch {
-            print("[Preferences] Error fetching preferences: \(error)")
+            Log.store.error("Error fetching preferences: \(error)")
             // Return defaults without saving on error
             return UserPreferences()
         }
@@ -50,9 +51,9 @@ class UserPreferencesService {
 
         do {
             try modelContext.save()
-            print("[Preferences] Updated player names: \(player1) vs \(player2)")
+            Log.store.info("Updated player names: \(player1) vs \(player2)")
         } catch {
-            print("[Preferences] Error saving player names: \(error)")
+            Log.store.error("Error saving player names: \(error)")
         }
     }
 
@@ -73,9 +74,9 @@ class UserPreferencesService {
 
         do {
             try modelContext.save()
-            print("[Preferences] Updated camera settings: \(deviceType), \(qualityPreset)")
+            Log.store.info("Updated camera settings: \(deviceType), \(qualityPreset)")
         } catch {
-            print("[Preferences] Error saving camera settings: \(error)")
+            Log.store.error("Error saving camera settings: \(error)")
         }
     }
 
@@ -94,9 +95,9 @@ class UserPreferencesService {
 
         do {
             try modelContext.save()
-            print("[Preferences] Camera recording \(enabled ? "enabled" : "disabled")")
+            Log.store.debug("Camera recording \(enabled ? "enabled" : "disabled")")
         } catch {
-            print("[Preferences] Error saving camera enabled: \(error)")
+            Log.store.error("Error saving camera enabled: \(error)")
         }
     }
 

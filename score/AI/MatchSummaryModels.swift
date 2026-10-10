@@ -10,7 +10,6 @@ import FoundationModels
 
 // MARK: - Match Summary Output
 
-@available(iOS 26.0, *)
 @Generable(description: "A summary of a table tennis match between two players")
 struct MatchSummary {
     @Guide(description: "A catchy headline for the match result in 5-10 words")
@@ -31,7 +30,6 @@ struct MatchSummary {
 
 // MARK: - Head-to-Head Analysis
 
-@available(iOS 26.0, *)
 @Generable(description: "Analysis of the rivalry between two players based on their match history")
 struct RivalryAnalysis {
     @Guide(description: "Description of the overall rivalry and who dominates")
@@ -46,7 +44,6 @@ struct RivalryAnalysis {
 
 // MARK: - Complete AI Summary
 
-@available(iOS 26.0, *)
 @Generable(description: "Complete AI-generated analysis of a match including rivalry context")
 struct MatchAnalysis {
     @Guide(description: "Summary of the current match")
@@ -69,7 +66,6 @@ struct MatchAnalysisCodable: Codable {
     let recentTrend: String?
     let lookAhead: String?
 
-    @available(iOS 26.0, *)
     init(from analysis: MatchAnalysis) {
         self.headline = analysis.matchSummary.headline
         self.narrative = analysis.matchSummary.narrative
@@ -81,7 +77,6 @@ struct MatchAnalysisCodable: Codable {
         self.lookAhead = analysis.rivalryAnalysis?.lookAhead
     }
 
-    @available(iOS 26.0, *)
     func toMatchAnalysis() -> MatchAnalysis {
         let rivalry = rivalryOverview.map { overview in
             RivalryAnalysis(

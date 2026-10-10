@@ -101,7 +101,7 @@ struct EndGameView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 20)
             }
-            .buttonStyle(GlassButtonStyle())
+            .buttonStyle(.glass)
             .tint(.orange)
             .sensoryFeedback(.success, trigger: endGameTrigger)
 
@@ -120,7 +120,7 @@ struct EndGameView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 20)
             }
-            .buttonStyle(GlassButtonStyle())
+            .buttonStyle(.glass)
             .tint(.red)
             .sensoryFeedback(.success, trigger: endMatchTrigger)
 
@@ -267,7 +267,7 @@ struct HighlightDetailsView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 30)
             }
-            .buttonStyle(GlassProminentButtonStyle())
+            .buttonStyle(.glassProminent)
             .tint(.yellow)
             .sensoryFeedback(.success, trigger: highlightTrigger)
 

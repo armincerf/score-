@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import os
 
 class UndoService {
     private let eventStore: EventStore
@@ -32,7 +33,7 @@ class UndoService {
             .reversed()
             .first(where: { $0.eventType == EventType.pointScored.rawValue && !$0.isUndone })
         else {
-            print("[UndoService] No points to undo in current game")
+            Log.store.debug("No points to undo in current game")
             return nil
         }
 
@@ -44,7 +45,7 @@ class UndoService {
         if pointsSinceLastGame.count > maxUndoDepth {
             let indexOfLastPoint = pointsSinceLastGame.firstIndex(where: { $0.id == lastPointEvent.id })
             if let index = indexOfLastPoint, index < pointsSinceLastGame.count - maxUndoDepth {
-                print("[UndoService] Cannot undo - exceeds max undo depth of \(maxUndoDepth)")
+                Log.store.error("Cannot undo - exceeds max undo depth of \(self.maxUndoDepth)")
                 throw UndoError.exceedsMaxDepth
             }
         }
@@ -67,7 +68,7 @@ class UndoService {
 
         // Decode the point event to get player info for logging
         let pointEvent = try JSONDecoder().decode(PointScoredEvent.self, from: lastPointEvent.eventData)
-        print("[UndoService] Undid point for player \(pointEvent.player)")
+        Log.store.debug("Undid point for player \(pointEvent.player)")
 
         return undoEvent.id
     }
@@ -83,7 +84,7 @@ class UndoService {
             .reversed()
             .first(where: { $0.eventType == EventType.highlightMarked.rawValue && !$0.isUndone })
         else {
-            print("[UndoService] No highlights to undo in current game")
+            Log.store.debug("No highlights to undo in current game")
             return nil
         }
 
@@ -103,7 +104,7 @@ class UndoService {
         // Store undo event
         try eventStore.append(event: undoEvent)
 
-        print("[UndoService] Undid highlight mark")
+        Log.store.debug("Undid highlight mark")
 
         return undoEvent.id
     }

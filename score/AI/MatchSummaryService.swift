@@ -12,7 +12,6 @@ import Combine
 
 // MARK: - Match Summary Service
 
-@available(iOS 26.0, *)
 @MainActor
 final class MatchSummaryService: ObservableObject {
     
@@ -194,65 +193,5 @@ final class MatchSummaryService: ObservableObject {
             return containsP1 && containsP2
         }
         .sorted { $0.timestamp > $1.timestamp }
-    }
-}
-
-// MARK: - Convenience Extensions
-
-@available(iOS 26.0, *)
-extension MatchSummaryService {
-    
-    func generateSummary(for storedMatch: StoredMatch, allMatches: [StoredMatch]) async -> MatchAnalysis? {
-        let matchResults = allMatches.compactMap { stored -> MatchResult? in
-            let events = stored.events
-            
-            let games = reconstructGames(from: events)
-            
-            return MatchResult(
-                name: stored.matchName,
-                playerOneGames: stored.playerOneGames,
-                playerTwoGames: stored.playerTwoGames,
-                winner: stored.winner ?? (stored.playerOneGames > stored.playerTwoGames ? 1 : 2),
-                games: games,
-                timestamp: stored.startTimestamp,
-                fullVideoURL: stored.fullVideoURL,
-                highlightVideoURL: stored.highlightVideoURL,
-                duration: stored.totalDuration
-            )
-        }
-        
-        let currentMatchResult = MatchResult(
-            name: storedMatch.matchName,
-            playerOneGames: storedMatch.playerOneGames,
-            playerTwoGames: storedMatch.playerTwoGames,
-            winner: storedMatch.winner ?? (storedMatch.playerOneGames > storedMatch.playerTwoGames ? 1 : 2),
-            games: reconstructGames(from: storedMatch.events),
-            timestamp: storedMatch.startTimestamp,
-            fullVideoURL: storedMatch.fullVideoURL,
-            highlightVideoURL: storedMatch.highlightVideoURL,
-            duration: storedMatch.totalDuration
-        )
-        
-        return await generateSummary(for: currentMatchResult, allMatches: matchResults)
-    }
-    
-    private func reconstructGames(from events: [StoredMatchEvent]) -> [GameResult] {
-        return []
-    }
-}
-
-// MARK: - Preview/Fallback for older iOS
-
-struct MatchSummaryFallback {
-    static func generateBasicSummary(
-        playerOneName: String,
-        playerTwoName: String,
-        winner: Int,
-        playerOneGames: Int,
-        playerTwoGames: Int
-    ) -> String {
-        let winnerName = winner == 1 ? playerOneName : playerTwoName
-        let score = "\(playerOneGames)-\(playerTwoGames)"
-        return "\(winnerName) wins \(score) in a competitive match!"
     }
 }

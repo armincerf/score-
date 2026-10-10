@@ -8,6 +8,7 @@
 import Foundation
 @preconcurrency import AVFoundation
 import Combine
+import os
 
 @MainActor
 class ScoreAnnouncer: NSObject, ObservableObject {
@@ -26,7 +27,7 @@ class ScoreAnnouncer: NSObject, ObservableObject {
             try audioSession.setCategory(.playback, mode: .default, options: [.duckOthers, .mixWithOthers])
             try audioSession.setActive(true)
         } catch {
-            print("[Announcer] Failed to configure audio session: \(error)")
+            Log.audio.error("Failed to configure audio session: \(error)")
         }
     }
     
@@ -87,16 +88,16 @@ class ScoreAnnouncer: NSObject, ObservableObject {
         }
         
         synthesizer.speak(utterance)
-        print("[Announcer] Speaking: \(text)")
+        Log.audio.debug("Speaking: \(text)")
     }
 }
 
 extension ScoreAnnouncer: AVSpeechSynthesizerDelegate {
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        print("[Announcer] Finished speaking")
+        Log.audio.debug("Finished speaking")
     }
     
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-        print("[Announcer] Cancelled speaking")
+        Log.audio.debug("Cancelled speaking")
     }
 }

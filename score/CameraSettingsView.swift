@@ -8,6 +8,7 @@
 import SwiftUI
 import AVFoundation
 import SwiftData
+import os
 
 struct CameraSettingsView: View {
     @Environment(\.dismiss) private var dismiss
@@ -215,9 +216,9 @@ struct CameraSettingsView: View {
 
         do {
             try modelContext.save()
-            print("[CameraSettings] Saved: \(selectedDeviceType.displayName), \(selectedQuality.displayName)")
+            Log.ui.debug("Saved: \(selectedDeviceType.displayName), \(selectedQuality.displayName)")
         } catch {
-            print("[CameraSettings] Error saving: \(error)")
+            Log.ui.error("Error saving: \(error)")
         }
     }
 }

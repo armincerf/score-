@@ -9,6 +9,7 @@ import SwiftUI
 import SwiftData
 import AVFoundation
 import AudioToolbox
+import os
 
 struct GameView: View {
     @EnvironmentObject var connectivity: WatchConnectivityManager
@@ -266,14 +267,14 @@ struct GameView: View {
                         Button("End Game") {
                             showingEndGameAlert = true
                         }
-                        .buttonStyle(GlassProminentButtonStyle())
+                        .buttonStyle(.glassProminent)
                         .padding(8)
                         .tint(.orange)
 
                         Button("End Match") {
                             showingEndMatchAlert = true
                         }
-                        .buttonStyle(GlassProminentButtonStyle())
+                        .buttonStyle(.glassProminent)
                         .padding(8)
                         .tint(.purple)
                     }
@@ -295,31 +296,31 @@ struct GameView: View {
             }
         }
         .onAppear {
-            print("[GameView] 🎮 onAppear called")
-            print("[GameView] 🎮 isRecording: \(connectivity.isRecording)")
+            Log.ui.debug("🎮 onAppear called")
+            Log.ui.debug("🎮 isRecording: \(connectivity.isRecording)")
 
             // Load camera enabled state
             cameraEnabled = preferencesService.isCameraEnabled()
-            print("[GameView] 🎮 Camera enabled: \(cameraEnabled)")
+            Log.ui.debug("🎮 Camera enabled: \(cameraEnabled)")
 
             // Auto-start recording when game starts (if not already recording)
             if !connectivity.isRecording {
-                print("[GameView] 🎮 Not recording, calling startRecording()")
+                Log.ui.debug("🎮 Not recording, calling startRecording()")
                 connectivity.startRecording()
-                print("[GameView] 🎮 startRecording() completed")
+                Log.ui.debug("🎮 startRecording() completed")
             } else {
-                print("[GameView] 🎮 Already recording, skipping startRecording()")
+                Log.ui.debug("🎮 Already recording, skipping startRecording()")
                 // If already recording, capture session should already exist
                 captureSession = connectivity.videoManager?.captureSession
             }
 
             // Update undo availability
-            print("[GameView] 🎮 Updating undo availability")
+            Log.ui.debug("🎮 Updating undo availability")
             updateUndoAvailability()
-            print("[GameView] 🎮 onAppear completed")
+            Log.ui.debug("🎮 onAppear completed")
         }
         .onChange(of: connectivity.videoManager?.captureSession) { _, newSession in
-            print("[GameView] 🎮 Capture session changed: \(newSession != nil)")
+            Log.ui.debug("🎮 Capture session changed: \(newSession != nil)")
             captureSession = newSession
         }
         .onChange(of: connectivity.scoreState.playerOneScore) {
@@ -359,7 +360,7 @@ struct GameView: View {
         .alert("Cancel Match", isPresented: $showingCancelAlert) {
             Button("Keep Playing", role: .cancel) { }
             Button("Delete Match", role: .destructive) {
-                cancelMatch()
+                Task { await cancelMatch() }
             }
         } message: {
             Text("This will delete all recordings and data for this match. This cannot be undone.")
@@ -408,7 +409,7 @@ struct GameView: View {
                 updateUndoAvailability()
             }
         } catch {
-            print("[GameView] Error undoing: \(error)")
+            Log.ui.error("Error undoing: \(error)")
         }
     }
 
@@ -425,9 +426,9 @@ struct GameView: View {
         }
     }
 
-    private func cancelMatch() {
+    private func cancelMatch() async {
         // Delete match and all associated data (handles cleanup internally)
-        connectivity.cancelMatch()
+        await connectivity.cancelMatch()
 
         // Return to home
         dismiss()
@@ -438,14 +439,14 @@ struct GameView: View {
         showExportProgress = true
         exportProgress = 0.0
 
-        // Stop recording and get video URL
-        let videoURL = connectivity.stopRecording()
+        // Stop recording and wait for the finished video file
+        let videoURL = await connectivity.stopRecording()
 
         // Export both full video and highlight reel with correct orientation
         let (fullVideo, highlightReel) = await connectivity.exportMatchVideos(
             from: videoURL,
             progressHandler: { progress in
-                self.exportProgress = progress
+                exportProgress = progress
             }
         )
 
@@ -518,7 +519,7 @@ class CameraPreviewViewController: UIViewController {
         updatePreviewSession()
         updatePreviewOrientation()
         
-        print("[CameraPreview] 📹 Created preview layer")
+        Log.video.info("📹 Created preview layer")
     }
     
     private func updatePreviewSession() {
@@ -531,7 +532,7 @@ class CameraPreviewViewController: UIViewController {
         // Use window scene for accurate orientation (works better than UIDevice orientation)
         let orientation: UIInterfaceOrientation
         if let windowScene = view.window?.windowScene {
-            orientation = windowScene.interfaceOrientation
+            orientation = windowScene.effectiveGeometry.interfaceOrientation
         } else {
             // Fallback to device orientation
             let deviceOrientation = UIDevice.current.orientation
@@ -560,7 +561,7 @@ class CameraPreviewViewController: UIViewController {
         
         if connection.isVideoRotationAngleSupported(rotationAngle) {
             connection.videoRotationAngle = rotationAngle
-            print("[CameraPreview] 📱 Orientation updated to angle: \(rotationAngle) (interface: \(orientation.rawValue))")
+            Log.video.debug("📱 Orientation updated to angle: \(rotationAngle) (interface: \(orientation.rawValue))")
         }
     }
 }

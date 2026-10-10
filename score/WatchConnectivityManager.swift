@@ -16,10 +16,11 @@ import SwiftData
 
 #if canImport(FoundationModels)
 import FoundationModels
+import os
 #endif
 
 /// Sendable wrapper for WCSession message data (iOS side)
-struct WatchMessageData: Sendable {
+nonisolated struct WatchMessageData: Sendable {
     let command: String?
     let scoreState: ScoreState?
     
@@ -31,7 +32,7 @@ struct WatchMessageData: Sendable {
 
 /// Wrapper to make non-Sendable values sendable when you know it's safe
 /// Used for WCSession reply handlers which are safe to call from any thread
-struct UnsafeSendable<T>: @unchecked Sendable {
+nonisolated struct UnsafeSendable<T>: @unchecked Sendable {
     let value: T
     init(_ value: T) { self.value = value }
 }
@@ -118,7 +119,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         do {
             if let activeMatch = try eventStore.getActiveMatch() {
                 currentMatchId = activeMatch.id
-                print("[iOS] Loading active match: \(activeMatch.matchName)")
+                Log.match.debug("Loading active match: \(activeMatch.matchName)")
 
                 // Rebuild state from events
                 let events = try eventStore.getEvents(matchId: activeMatch.id)
@@ -132,11 +133,11 @@ class WatchConnectivityManager: NSObject, ObservableObject {
                     let event = try JSONDecoder().decode(MatchStartedEvent.self, from: matchStartedEvent.eventData)
                     if let videoPath = event.videoFilePath {
                         currentVideoURL = URL(fileURLWithPath: videoPath)
-                        print("[iOS] Restored video file path: \(videoPath)")
+                        Log.match.debug("Restored video file path: \(videoPath)")
 
                         // Check if video file exists
                         if !FileManager.default.fileExists(atPath: videoPath) {
-                            print("[iOS] ⚠️ Video file does not exist at path - recording may have been interrupted")
+                            Log.match.warning("⚠️ Video file does not exist at path - recording may have been interrupted")
                         }
                     }
                 }
@@ -179,10 +180,10 @@ class WatchConnectivityManager: NSObject, ObservableObject {
                     currentGameStartTime = scoreState.currentMatchGames.reduce(0) { $0 + ($1.duration ?? 0) }
                 }
 
-                print("[iOS] Loaded match state: \(scoreState.playerOneGames)-\(scoreState.playerTwoGames), Recording: \(isRecording)")
+                Log.match.info("Loaded match state: \(self.scoreState.playerOneGames)-\(self.scoreState.playerTwoGames), Recording: \(self.isRecording)")
             }
         } catch {
-            print("[iOS] Error loading active match: \(error)")
+            Log.match.error("Error loading active match: \(error)")
         }
     }
 
@@ -195,16 +196,16 @@ class WatchConnectivityManager: NSObject, ObservableObject {
             scoreState = try stateProjector.project(events: events, matchMetadata: match)
             currentGameNumber = scoreState.currentMatchGames.count
         } catch {
-            print("[iOS] Error refreshing state: \(error)")
+            Log.match.error("Error refreshing state: \(error)")
         }
     }
 
     // MARK: - Video Recording Setup
 
     func setupVideoRecording(completion: @escaping @Sendable () -> Void) {
-        print("[iOS] 📹 setupVideoRecording called, videoManager exists: \(videoManager != nil)")
+        Log.match.debug("📹 setupVideoRecording called, videoManager exists: \(self.videoManager != nil)")
         if videoManager == nil {
-            print("[iOS] 📹 Creating new VideoRecordingManager")
+            Log.match.debug("📹 Creating new VideoRecordingManager")
             videoManager = VideoRecordingManager()
         }
         
@@ -214,7 +215,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         let quality = VideoQualityPreset.from(string: qualityStr)
         videoManager?.configure(deviceType: deviceType, quality: quality)
         
-        print("[iOS] 📹 Calling setupCaptureSession")
+        Log.match.debug("📹 Calling setupCaptureSession")
         videoManager?.setupCaptureSession(completion: completion)
     }
 
@@ -234,15 +235,15 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         // Use sendMessage for instant delivery (high priority)
         if session.isReachable {
             session.sendMessage(message, replyHandler: nil) { error in
-                print("[iOS] Error sending highlight confirmation: \(error.localizedDescription)")
+                Log.match.error("Error sending highlight confirmation: \(error.localizedDescription)")
             }
-            print("[iOS] ⭐ Highlight confirmation sent instantly to watch (count: \(highlightCount))")
+            Log.match.debug("⭐ Highlight confirmation sent instantly to watch (count: \(highlightCount))")
         } else {
             // Fallback to context if not reachable
             do {
                 try session.updateApplicationContext(message)
             } catch {
-                print("[iOS] Error updating context: \(error.localizedDescription)")
+                Log.match.error("Error updating context: \(error.localizedDescription)")
             }
         }
     }
@@ -259,13 +260,13 @@ class WatchConnectivityManager: NSObject, ObservableObject {
 
         if session.isReachable {
             session.sendMessage(message, replyHandler: nil) { error in
-                print("[iOS] Error sending: \(error.localizedDescription)")
+                Log.match.error("Error sending: \(error.localizedDescription)")
             }
         }
 
         do {
             try session.updateApplicationContext(message)
-            print("[iOS] Updated context: P1=\(scoreState.playerOneScore) P2=\(scoreState.playerTwoScore)")
+            Log.match.info("Updated context: P1=\(self.scoreState.playerOneScore) P2=\(self.scoreState.playerTwoScore)")
         } catch {
             // Silently ignore watch sync errors - app works standalone
         }
@@ -274,22 +275,22 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     // MARK: - Recording Control
 
     func startRecording() {
-        print("[iOS] 🔴 startRecording called")
+        Log.match.debug("🔴 startRecording called")
 
         // Check if camera recording is enabled
         let cameraEnabled = preferencesService.isCameraEnabled()
-        print("[iOS] 🔴 Camera recording enabled: \(cameraEnabled)")
+        Log.match.debug("🔴 Camera recording enabled: \(cameraEnabled)")
 
         // Use the pre-created video URL (set in setMatchName)
         guard let fileURL = currentVideoURL else {
-            print("[iOS] ⚠️ No video URL set - cannot start recording")
+            Log.match.error("⚠️ No video URL set - cannot start recording")
             return
         }
 
-        print("[iOS] 🔴 Video URL: \(fileURL.lastPathComponent)")
-        print("[iOS] 🔴 Simulator mode: \(isRunningOnSimulator)")
+        Log.match.debug("🔴 Video URL: \(fileURL.lastPathComponent)")
+        Log.match.debug("🔴 Simulator mode: \(self.isRunningOnSimulator)")
 
-        print("[iOS] 🔴 Initializing recording state")
+        Log.match.debug("🔴 Initializing recording state")
         pointTimestamps = []
         currentGameStartTime = 0  // First game starts at 0
         recordingDuration = 0  // Reset duration for new recording
@@ -298,7 +299,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         scoreState.recordingStartTime = Date()
         isRecording = true
 
-        print("[iOS] 🔴 Starting duration timer")
+        Log.match.debug("🔴 Starting duration timer")
         // Start duration timer - capture startTime to avoid accessing MainActor property in timer
         let startTime = scoreState.recordingStartTime ?? Date()
         durationTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
@@ -310,51 +311,48 @@ class WatchConnectivityManager: NSObject, ObservableObject {
 
         // Only setup video recording on real device and if camera is enabled
         guard cameraEnabled else {
-            print("[iOS] ⏭️ Camera disabled - skipping video recording setup")
+            Log.match.debug("⏭️ Camera disabled - skipping video recording setup")
             return
         }
         if !isRunningOnSimulator {
-            print("[iOS] 🔴 Setting up video recording on real device")
+            Log.match.debug("🔴 Setting up video recording on real device")
             setupVideoRecording { [weak self] in
                 Task { @MainActor in
                     guard let self else { return }
-                    print("[iOS] 🔴 Capture session is ready, now starting recording to file: \(fileURL.path)")
+                    Log.match.debug("🔴 Capture session is ready, now starting recording to file: \(fileURL.path)")
                     self.videoManager?.startRecording(to: fileURL)
-                    print("[iOS] 🔴 VideoManager startRecording called")
+                    Log.match.debug("🔴 VideoManager startRecording called")
                 }
             }
         } else {
-            print("[iOS] ⚠️ Running on simulator - using mock video recording")
+            Log.match.warning("⚠️ Running on simulator - using mock video recording")
         }
 
-        print("[iOS] 🔴 Sending score to watch")
+        Log.match.debug("🔴 Sending score to watch")
         sendScore()
-        print("[iOS] 🔴 Recording initialization complete (actual recording will start when session is ready)")
+        Log.match.debug("🔴 Recording initialization complete (actual recording will start when session is ready)")
     }
 
-    func stopRecording() -> URL? {
+    /// Stops recording and returns the finished movie file once AVFoundation has finalized it.
+    func stopRecording() async -> URL? {
         durationTimer?.invalidate()
         durationTimer = nil
 
-        var videoURL: URL? = nil
+        var videoURL: URL?
 
-        // Check if camera is enabled
-        let cameraEnabled = preferencesService.isCameraEnabled()
-
-        if cameraEnabled {
+        if preferencesService.isCameraEnabled() {
             if !isRunningOnSimulator {
-                videoManager?.stopRecording()
-                videoURL = videoManager?.currentVideoURL
-                // Stop the capture session to turn off camera/mic
+                // Waits for the file to be fully written before the capture session is torn down
+                videoURL = await videoManager?.stopRecording()
                 videoManager?.stopCaptureSession()
             } else {
                 // Generate mock video on simulator
                 let mockDuration = recordingDuration > 0 ? recordingDuration : 30.0
-                print("[iOS] 🎬 Generating mock video (\(Int(mockDuration))s)...")
-                videoURL = MockVideoGenerator.generateMockVideo(duration: mockDuration)
+                Log.match.debug("🎬 Generating mock video (\(Int(mockDuration))s)...")
+                videoURL = await MockVideoGenerator.generateMockVideo(duration: mockDuration)
             }
         } else {
-            print("[iOS] Camera disabled - no video to stop")
+            Log.match.debug("Camera disabled - no video to stop")
         }
 
         scoreState.isRecording = false
@@ -362,7 +360,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         // DON'T reset recordingDuration here - we need it for endMatch()
 
         sendScore()
-        print("[iOS] ⬛ Recording stopped - Video: \(videoURL?.lastPathComponent ?? "none")")
+        Log.match.info("⬛ Recording stopped - Video: \(videoURL?.lastPathComponent ?? "none")")
 
         return videoURL
     }
@@ -401,7 +399,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
 
     private func scorePoint(forPlayer player: Int) {
         guard let matchId = currentMatchId else {
-            print("[iOS] No active match")
+            Log.match.debug("No active match")
             return
         }
 
@@ -426,7 +424,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
             // Capture orientation after first point (phone is now in stable position)
             if matchExportOrientation == nil {
                 matchExportOrientation = MediaExportService.VideoOrientation.current()
-                print("[iOS] 📱 Export orientation captured: \(matchExportOrientation!)")
+                Log.match.debug("📱 Export orientation captured: \(self.matchExportOrientation!)")
             }
 
             // Update state
@@ -457,7 +455,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
                 playerTwoName: scoreState.playerTwoName
             )
         } catch {
-            print("[iOS] Error incrementing player \(player): \(error)")
+            Log.match.error("Error incrementing player \(player): \(error)")
         }
     }
 
@@ -492,9 +490,9 @@ class WatchConnectivityManager: NSObject, ObservableObject {
             pendingHighlightId = nil
 
             let playerName = player == 1 ? scoreState.playerOneName : scoreState.playerTwoName
-            print("[iOS] ⭐ Highlight attributed to \(playerName ?? "P\(player)")")
+            Log.match.info("⭐ Highlight attributed to \(playerName ?? "P\(player)")")
         } catch {
-            print("[iOS] Error attributing highlight: \(error)")
+            Log.match.error("Error attributing highlight: \(error)")
         }
     }
 
@@ -518,7 +516,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         )
         scoreState.currentGamePoints.append(point)
 
-        print("[iOS] Point recorded at \(String(format: "%.1f", videoTimestamp))s for P\(player)\(wasServing ? " (serving)" : "")")
+        Log.match.debug("Point recorded at \(String(format: "%.1f", videoTimestamp))s for P\(player)\(wasServing ? " (serving)" : "")")
     }
 
     private func removeLastPointIfPlayer(_ player: Int) {
@@ -540,21 +538,21 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         let generator = UINotificationFeedbackGenerator()
         generator.notificationOccurred(.success)
         
-        print("[iOS] 🔔 Highlight ping sound played")
+        Log.match.debug("🔔 Highlight ping sound played")
     }
 
     // MARK: - Highlight Marking
 
     func markHighlight() {
-        print("[iOS] markHighlight() called - isRecording=\(scoreState.isRecording), matchId=\(currentMatchId?.uuidString ?? "nil")")
+        Log.match.debug("markHighlight() called - isRecording=\(self.scoreState.isRecording), matchId=\(self.currentMatchId?.uuidString ?? "nil")")
         
         guard scoreState.isRecording else {
-            print("[iOS] Not recording - highlight ignored")
+            Log.match.debug("Not recording - highlight ignored")
             return
         }
 
         guard let matchId = currentMatchId else {
-            print("[iOS] No active match")
+            Log.match.debug("No active match")
             return
         }
 
@@ -591,9 +589,9 @@ class WatchConnectivityManager: NSObject, ObservableObject {
             // Send immediate confirmation to watch with updated highlight count
             sendHighlightConfirmation()
 
-            print("[iOS] ⭐ HIGHLIGHT MARKED at \(String(format: "%.1f", highlightTimestamp))s (clip: \(String(format: "%.1f-%.1f", lastPointTimestamp, highlightTimestamp))s) - waiting for player attribution")
+            Log.match.info("⭐ HIGHLIGHT MARKED at \(String(format: "%.1f", highlightTimestamp))s (clip: \(String(format: "%.1f-%.1f", lastPointTimestamp, highlightTimestamp))s) - waiting for player attribution")
         } catch {
-            print("[iOS] Error marking highlight: \(error)")
+            Log.match.error("Error marking highlight: \(error)")
         }
     }
 
@@ -608,7 +606,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
 
     func endGame() {
         guard let matchId = currentMatchId else {
-            print("[iOS] No active match")
+            Log.match.debug("No active match")
             return
         }
 
@@ -667,10 +665,10 @@ class WatchConnectivityManager: NSObject, ObservableObject {
 
             sendScore()
 
-            print("[iOS] Game ended: \(game.playerOneScore)-\(game.playerTwoScore) (duration: \(String(format: "%.1f", gameDuration))s)")
-            print("[iOS] Next game first server: Player \(scoreState.currentGameFirstServer ?? 1)")
+            Log.match.info("Game ended: \(game.playerOneScore)-\(game.playerTwoScore) (duration: \(String(format: "%.1f", gameDuration))s)")
+            Log.match.debug("Next game first server: Player \(self.scoreState.currentGameFirstServer ?? 1)")
         } catch {
-            print("[iOS] Error ending game: \(error)")
+            Log.match.error("Error ending game: \(error)")
         }
     }
 
@@ -678,10 +676,10 @@ class WatchConnectivityManager: NSObject, ObservableObject {
     
     func exportMatchVideos(
         from fullVideoURL: URL?,
-        progressHandler: @escaping @Sendable (Double) -> Void = { _ in }
+        progressHandler: @escaping MediaExportService.ProgressHandler = { _ in }
     ) async -> (fullVideo: URL?, highlightReel: URL?) {
         guard let fullVideoURL = fullVideoURL else {
-            print("[iOS] No video available")
+            Log.match.debug("No video available")
             return (nil, nil)
         }
         
@@ -690,13 +688,13 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         
         // Verify file exists and is accessible
         guard FileManager.default.fileExists(atPath: fullVideoURL.path) else {
-            print("[iOS] ❌ Video file not found at: \(fullVideoURL.path)")
+            Log.match.error("❌ Video file not found at: \(fullVideoURL.path)")
             return (nil, nil)
         }
         
         // Use captured orientation, or fallback to landscape
         let orientation = matchExportOrientation ?? .landscapeLeft
-        print("[iOS] 🎬 Exporting videos with orientation: \(orientation)")
+        Log.match.debug("🎬 Exporting videos with orientation: \(orientation)")
         
         // Export full video with correct orientation
         let exportedFullURL = FileManager.default.temporaryDirectory
@@ -715,9 +713,9 @@ class WatchConnectivityManager: NSObject, ObservableObject {
                 }
             )
             exportedFullVideo = result.outputURL
-            print("[iOS] ✅ Full video exported: \(result.outputURL.lastPathComponent)")
+            Log.match.info("✅ Full video exported: \(result.outputURL.lastPathComponent)")
         } catch {
-            print("[iOS] ❌ Full video export failed: \(error.localizedDescription)")
+            Log.match.error("❌ Full video export failed: \(error.localizedDescription)")
             exportedFullVideo = fullVideoURL
         }
         
@@ -725,12 +723,12 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         let highlightClips = scoreState.highlightClips
         
         guard !highlightClips.isEmpty else {
-            print("[iOS] No highlights marked - only saving full video")
+            Log.match.debug("No highlights marked - only saving full video")
             progressHandler(1.0)
             return (exportedFullVideo, nil)
         }
         
-        print("[iOS] 🎬 Generating highlight reel with \(highlightClips.count) highlights")
+        Log.match.debug("🎬 Generating highlight reel with \(highlightClips.count) highlights")
         
         let highlightURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("highlight_\(Date().timeIntervalSince1970).mov")
@@ -746,7 +744,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         
         for (index, clip) in highlightClips.enumerated() {
             let playerName = clip.player.map { $0 == 1 ? (scoreState.playerOneName ?? "P1") : (scoreState.playerTwoName ?? "P2") } ?? "?"
-            print("[iOS]   Highlight \(index + 1) (\(playerName)): \(String(format: "%.1f-%.1f", clip.startTimestamp, clip.endTimestamp))s")
+            Log.match.debug("  Highlight \(index + 1) (\(playerName)): \(String(format: "%.1f-%.1f", clip.startTimestamp, clip.endTimestamp))s")
         }
         
         do {
@@ -760,23 +758,15 @@ class WatchConnectivityManager: NSObject, ObservableObject {
                 }
             )
             exportedHighlightReel = result.outputURL
-            print("[iOS] ✅ Highlight reel saved: \(result.outputURL.lastPathComponent)")
+            Log.match.info("✅ Highlight reel saved: \(result.outputURL.lastPathComponent)")
         } catch {
-            print("[iOS] ❌ Highlight export failed: \(error.localizedDescription)")
+            Log.match.error("❌ Highlight export failed: \(error.localizedDescription)")
         }
         
         progressHandler(1.0)
         return (exportedFullVideo, exportedHighlightReel)
     }
     
-    @available(*, deprecated, renamed: "exportMatchVideos")
-    func generateHighlightReel(
-        from fullVideoURL: URL?,
-        progressHandler: @escaping @Sendable (Double) -> Void = { _ in }
-    ) async -> (fullVideo: URL?, highlightReel: URL?) {
-        await exportMatchVideos(from: fullVideoURL, progressHandler: progressHandler)
-    }
-
     func setMatchName(_ name: String, player1: String, player2: String) {
         // First, reset any lingering manager state from previous match
         // This ensures clean slate even if resetMatchState wasn't called
@@ -813,7 +803,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
                 currentVideoURL = fileURL
             } else {
                 currentVideoURL = nil
-                print("[iOS] Camera disabled - no video will be recorded")
+                Log.match.debug("Camera disabled - no video will be recorded")
             }
 
             // Create MatchStartedEvent with video file path and initial server (for replay consistency)
@@ -841,21 +831,21 @@ class WatchConnectivityManager: NSObject, ObservableObject {
             )
 
             if cameraEnabled {
-                print("[iOS] Match started: \(name), video will be saved to: \(fileURL?.lastPathComponent ?? "unknown")")
+                Log.match.info("Match started: \(name), video will be saved to: \(fileURL?.lastPathComponent ?? "unknown")")
             } else {
-                print("[iOS] Match started: \(name), no video recording")
+                Log.match.info("Match started: \(name), no video recording")
             }
-            print("[iOS] Initial server: Player \(initialServer)")
+            Log.match.debug("Initial server: Player \(initialServer)")
         } catch {
-            print("[iOS] Error starting match: \(error)")
+            Log.match.error("Error starting match: \(error)")
         }
 
         sendScore()  // Sync names to watch immediately
     }
 
-    func cancelMatch() {
+    func cancelMatch() async {
         guard let matchId = currentMatchId else {
-            print("[iOS] No active match to cancel")
+            Log.match.debug("No active match to cancel")
             return
         }
 
@@ -863,9 +853,10 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         durationTimer?.invalidate()
         durationTimer = nil
 
-        // Stop recording and camera/mic if running (without processing video)
+        // Stop recording and camera/mic if running (without processing video).
+        // Await finalization so the file delete below is not raced by AVFoundation.
         if !isRunningOnSimulator {
-            videoManager?.stopRecording()
+            _ = await videoManager?.stopRecording()
             videoManager?.stopCaptureSession()
         }
 
@@ -873,7 +864,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
             // Delete video files
             if let videoURL = currentVideoURL {
                 try? FileManager.default.removeItem(at: videoURL)
-                print("[iOS] Deleted video file: \(videoURL.lastPathComponent)")
+                Log.match.info("Deleted video file: \(videoURL.lastPathComponent)")
             }
 
             // Delete match and all events from database
@@ -882,15 +873,15 @@ class WatchConnectivityManager: NSObject, ObservableObject {
             // Reset everything
             resetMatchState()
 
-            print("[iOS] Match cancelled and deleted")
+            Log.match.debug("Match cancelled and deleted")
         } catch {
-            print("[iOS] Error cancelling match: \(error)")
+            Log.match.error("Error cancelling match: \(error)")
         }
     }
 
     func endMatch(fullVideoURL: URL?, highlightVideoURL: URL?) {
         guard let matchId = currentMatchId else {
-            print("[iOS] No active match to end")
+            Log.match.debug("No active match to end")
             return
         }
 
@@ -954,66 +945,52 @@ class WatchConnectivityManager: NSObject, ObservableObject {
             scoreState.matchHistory.append(matchResult)
 
             // Auto-generate AI summary in background
+            let historySnapshot = scoreState.matchHistory
             Task {
-                await generateAISummary(for: matchResult, allMatches: scoreState.matchHistory)
+                await generateAISummary(for: matchResult, matchId: matchId, allMatches: historySnapshot)
             }
 
             // Reset everything
             resetMatchState()
 
             sendScore()
-            print("[iOS] Match ended - Full video: \(fullVideoURLString ?? "none"), Highlights: \(highlightVideoURLString ?? "none")")
+            Log.match.info("Match ended - Full video: \(fullVideoURLString ?? "none"), Highlights: \(highlightVideoURLString ?? "none")")
         } catch {
-            print("[iOS] Error ending match: \(error)")
+            Log.match.error("Error ending match: \(error)")
         }
     }
 
     // MARK: - AI Summary Generation
 
-    private func generateAISummary(for match: MatchResult, allMatches: [MatchResult]) async {
-        // Only available on iOS 26+
-        if #available(iOS 26.0, *) {
-            print("[iOS] 🤖 Auto-generating AI summary...")
-            let summaryService = MatchSummaryService()
+    private func generateAISummary(for match: MatchResult, matchId: UUID, allMatches: [MatchResult]) async {
+        Log.match.debug("🤖 Auto-generating AI summary...")
+        let summaryService = MatchSummaryService()
 
-            guard summaryService.isAvailable else {
-                print("[iOS] 🤖 AI summary not available: \(summaryService.availabilityDescription)")
-                return
+        guard summaryService.isAvailable else {
+            Log.match.warning("🤖 AI summary not available: \(summaryService.availabilityDescription)")
+            return
+        }
+
+        guard let summary = await summaryService.generateSummary(for: match, allMatches: allMatches) else {
+            if let error = summaryService.lastError {
+                Log.match.error("❌ AI summary generation failed: \(error.localizedDescription)")
             }
+            return
+        }
+        Log.match.info("✅ AI summary generated: \(summary.matchSummary.headline)")
 
-            if let summary = await summaryService.generateSummary(for: match, allMatches: allMatches) {
-                print("[iOS] ✅ AI summary generated: \(summary.matchSummary.headline)")
-
-                // Persist the summary to database
-                do {
-                    let codableSummary = MatchAnalysisCodable(from: summary)
-                    let summaryData = try JSONEncoder().encode(codableSummary)
-
-                    // Find the match in database and save the summary
-                    if let matchName = match.name {
-                        let descriptor = FetchDescriptor<StoredMatch>(
-                            predicate: #Predicate { $0.matchName == matchName }
-                        )
-
-                        let matches = try modelContext.fetch(descriptor)
-                        if let storedMatch = matches.first {
-                            storedMatch.aiSummaryData = summaryData
-                            try modelContext.save()
-                            print("[iOS] 💾 AI summary saved to database for match: \(matchName)")
-                        } else {
-                            print("[iOS] ⚠️ Could not find match in database to save summary")
-                        }
-                    } else {
-                        print("[iOS] ⚠️ Match has no name, cannot save AI summary")
-                    }
-                } catch {
-                    print("[iOS] ❌ Failed to save AI summary: \(error.localizedDescription)")
-                }
-            } else if let error = summaryService.lastError {
-                print("[iOS] ❌ AI summary generation failed: \(error.localizedDescription)")
+        // Persist the summary against the match it belongs to (by id, never by name)
+        do {
+            let summaryData = try JSONEncoder().encode(MatchAnalysisCodable(from: summary))
+            if let storedMatch = try eventStore.getMatch(id: matchId) {
+                storedMatch.aiSummaryData = summaryData
+                try eventStore.updateMatch(storedMatch)
+                Log.match.info("💾 AI summary saved for match \(matchId)")
+            } else {
+                Log.match.warning("⚠️ Could not find match \(matchId) to save summary")
             }
-        } else {
-            print("[iOS] 🤖 AI summary requires iOS 26+")
+        } catch {
+            Log.match.error("❌ Failed to save AI summary: \(error.localizedDescription)")
         }
     }
 
@@ -1034,7 +1011,7 @@ class WatchConnectivityManager: NSObject, ObservableObject {
         
         scoreState.matchHistory.remove(at: index)
         sendScore()
-        print("[iOS] Deleted match at index \(index)")
+        Log.match.info("Deleted match at index \(index)")
     }
 
     /// Resets all match-scoped manager state (IDs, timers, URLs, etc.)
@@ -1095,14 +1072,14 @@ extension WatchConnectivityManager: WCSessionDelegate {
                 self.isWatchAppInstalled = true
             }
         }
-        print("[iOS] Session activated: \(activationState.rawValue), Paired: \(isPaired), Watch app installed: \(isWatchAppInstalled), Reachable: \(isReachable)")
+        Log.match.info("Session activated: \(activationState.rawValue), Paired: \(isPaired), Watch app installed: \(isWatchAppInstalled), Reachable: \(isReachable)")
         if hasContext {
-            print("[iOS] Watch app detected via application context")
+            Log.match.debug("Watch app detected via application context")
         }
     }
 
     nonisolated func sessionDidBecomeInactive(_ session: WCSession) {
-        print("[iOS] Session inactive")
+        Log.match.debug("Session inactive")
     }
 
     nonisolated func sessionDidDeactivate(_ session: WCSession) {
@@ -1114,7 +1091,7 @@ extension WatchConnectivityManager: WCSessionDelegate {
         Task { @MainActor in
             self.isWatchReachable = isReachable
         }
-        print("[iOS] Reachability: \(isReachable)")
+        Log.match.info("Reachability: \(isReachable)")
     }
 
     // Receive messages from watch
@@ -1152,16 +1129,16 @@ extension WatchConnectivityManager: WCSessionDelegate {
             switch command {
             case "incrementP1":
                 self.incrementPlayer1()
-                print("[iOS] Command: incrementP1")
+                Log.match.debug("Command: incrementP1")
 
             case "incrementP2":
                 self.incrementPlayer2()
-                print("[iOS] Command: incrementP2")
+                Log.match.debug("Command: incrementP2")
 
             case "highlight":
                 self.playHighlightSound()
                 self.markHighlight()
-                print("[iOS] Command: highlight from watch")
+                Log.match.debug("Command: highlight from watch")
 
             case "endGame":
                 self.endGame()
@@ -1169,14 +1146,14 @@ extension WatchConnectivityManager: WCSessionDelegate {
             case "endMatch":
                 // Watch requested match end - signal GameView to trigger the same flow as phone button
                 self.shouldEndMatchFromWatch = true
-                print("[iOS] Command: endMatch from watch - signaling GameView")
+                Log.match.debug("Command: endMatch from watch - signaling GameView")
 
             case "requestSync":
                 self.sendScore()
-                print("[iOS] Command: requestSync")
+                Log.match.debug("Command: requestSync")
 
             default:
-                print("[iOS] Unknown command: \(command)")
+                Log.match.debug("Unknown command: \(command)")
             }
             return
         }
@@ -1187,7 +1164,7 @@ extension WatchConnectivityManager: WCSessionDelegate {
         }
 
         self.scoreState = newState
-        print("[iOS] Received state update")
+        Log.match.debug("Received state update")
     }
 }
 
@@ -1200,6 +1177,9 @@ class VideoRecordingManager: NSObject, ObservableObject {
 
     private var videoOutput: AVCaptureMovieFileOutput?
     var currentVideoURL: URL?
+
+    /// Resumed by the AVCaptureFileOutputRecordingDelegate once the movie file is finalized.
+    private var stopContinuation: CheckedContinuation<URL?, Never>?
     
     // Store camera settings for recording
     private var cameraDeviceType: CameraDeviceType = .wide
@@ -1208,40 +1188,40 @@ class VideoRecordingManager: NSObject, ObservableObject {
     nonisolated deinit {
         // Note: deinit is nonisolated in Swift 6, cannot access MainActor-isolated properties directly
         // The capture session will be cleaned up by the system
-        print("[Video] 🧹 VideoRecordingManager deallocated")
+        Log.video.debug("🧹 VideoRecordingManager deallocated")
     }
     
     func configure(deviceType: CameraDeviceType, quality: VideoQualityPreset) {
         self.cameraDeviceType = deviceType
         self.videoQualityPreset = quality
-        print("[Video] 🎥 Configured with deviceType: \(deviceType.displayName), quality: \(quality.displayName)")
+        Log.video.debug("🎥 Configured with deviceType: \(deviceType.displayName), quality: \(quality.displayName)")
     }
 
     func setupCaptureSession(completion: @escaping @Sendable () -> Void) {
-        print("[Video] 🎥 setupCaptureSession called")
+        Log.video.debug("🎥 setupCaptureSession called")
 
         // Check authorization
         let authStatus = AVCaptureDevice.authorizationStatus(for: .video)
-        print("[Video] 🎥 Camera authorization status: \(authStatus.rawValue)")
+        Log.video.debug("🎥 Camera authorization status: \(authStatus.rawValue)")
 
         switch authStatus {
         case .authorized:
-            print("[Video] 🎥 Camera authorized, configuring capture session")
+            Log.video.debug("🎥 Camera authorized, configuring capture session")
             configureCaptureSession(completion: completion)
         case .notDetermined:
-            print("[Video] 🎥 Camera permission not determined, requesting access")
+            Log.video.debug("🎥 Camera permission not determined, requesting access")
             AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
-                print("[Video] 🎥 Camera permission granted: \(granted)")
+                Log.video.debug("🎥 Camera permission granted: \(granted)")
                 if granted {
                     Task { @MainActor in
                         self?.configureCaptureSession(completion: completion)
                     }
                 } else {
-                    print("[Video] ❌ Camera permission denied by user")
+                    Log.video.error("❌ Camera permission denied by user")
                 }
             }
         default:
-            print("[Video] ❌ Camera access denied (status: \(authStatus.rawValue))")
+            Log.video.error("❌ Camera access denied (status: \(authStatus.rawValue))")
             Task { @MainActor in
                 self.error = "Camera access denied"
             }
@@ -1249,119 +1229,119 @@ class VideoRecordingManager: NSObject, ObservableObject {
     }
 
     private func configureCaptureSession(completion: @escaping @Sendable () -> Void) {
-        print("[Video] 🎥 configureCaptureSession START")
+        Log.video.debug("🎥 configureCaptureSession START")
 
         let session = AVCaptureSession()
-        print("[Video] 🎥 Created AVCaptureSession")
+        Log.video.info("🎥 Created AVCaptureSession")
 
         // Apply user's quality preference
         if session.canSetSessionPreset(videoQualityPreset.avPreset) {
             session.sessionPreset = videoQualityPreset.avPreset
-            print("[Video] 🎥 Set session preset to \(videoQualityPreset.displayName)")
+            Log.video.debug("🎥 Set session preset to \(self.videoQualityPreset.displayName)")
         } else {
             session.sessionPreset = .hd1280x720
-            print("[Video] 🎥 Preset \(videoQualityPreset.displayName) not supported, falling back to HD 720p")
+            Log.video.warning("🎥 Preset \(self.videoQualityPreset.displayName) not supported, falling back to HD 720p")
         }
 
         // Video input - use user's preferred camera lens
-        print("[Video] 🎥 Getting video device (preferred: \(cameraDeviceType.displayName))...")
+        Log.video.debug("🎥 Getting video device (preferred: \(self.cameraDeviceType.displayName))...")
         let videoDevice = getPreferredCameraDevice()
         guard let device = videoDevice else {
-            print("[Video] ❌ Failed to get video device")
+            Log.video.error("❌ Failed to get video device")
             DispatchQueue.main.async {
                 self.error = "Failed to access camera device"
             }
             return
         }
-        print("[Video] 🎥 Got video device: \(device.localizedName)")
+        Log.video.debug("🎥 Got video device: \(device.localizedName)")
 
-        print("[Video] 🎥 Creating video input...")
+        Log.video.debug("🎥 Creating video input...")
         guard let videoInput = try? AVCaptureDeviceInput(device: device) else {
-            print("[Video] ❌ Failed to create video input")
+            Log.video.error("❌ Failed to create video input")
             DispatchQueue.main.async {
                 self.error = "Failed to create video input"
             }
             return
         }
-        print("[Video] 🎥 Created video input")
+        Log.video.info("🎥 Created video input")
 
-        print("[Video] 🎥 Checking if can add video input to session...")
+        Log.video.debug("🎥 Checking if can add video input to session...")
         guard session.canAddInput(videoInput) else {
-            print("[Video] ❌ Cannot add video input to session")
+            Log.video.error("❌ Cannot add video input to session")
             DispatchQueue.main.async {
                 self.error = "Cannot add video input to session"
             }
             return
         }
-        print("[Video] 🎥 Adding video input to session...")
+        Log.video.debug("🎥 Adding video input to session...")
         session.addInput(videoInput)
-        print("[Video] ✅ Video input added successfully")
+        Log.video.info("✅ Video input added successfully")
 
         // Audio input (optional - silently fail if not available)
-        print("[Video] 🎥 Attempting to add audio input...")
+        Log.video.debug("🎥 Attempting to add audio input...")
         if let audioDevice = AVCaptureDevice.default(for: .audio) {
-            print("[Video] 🎥 Got audio device: \(audioDevice.localizedName)")
+            Log.video.debug("🎥 Got audio device: \(audioDevice.localizedName)")
             if let audioInput = try? AVCaptureDeviceInput(device: audioDevice) {
-                print("[Video] 🎥 Created audio input")
+                Log.video.info("🎥 Created audio input")
                 if session.canAddInput(audioInput) {
                     session.addInput(audioInput)
-                    print("[Video] ✅ Audio input added successfully")
+                    Log.video.info("✅ Audio input added successfully")
                 } else {
-                    print("[Video] ⚠️ Cannot add audio input to session")
+                    Log.video.error("⚠️ Cannot add audio input to session")
                 }
             } else {
-                print("[Video] ⚠️ Failed to create audio input")
+                Log.video.error("⚠️ Failed to create audio input")
             }
         } else {
-            print("[Video] ⚠️ No audio device available - recording video only")
+            Log.video.warning("⚠️ No audio device available - recording video only")
         }
 
         // Movie output
-        print("[Video] 🎥 Creating movie output...")
+        Log.video.debug("🎥 Creating movie output...")
         let movieOutput = AVCaptureMovieFileOutput()
-        print("[Video] 🎥 Checking if can add movie output...")
+        Log.video.debug("🎥 Checking if can add movie output...")
         if session.canAddOutput(movieOutput) {
-            print("[Video] 🎥 Adding movie output to session...")
+            Log.video.debug("🎥 Adding movie output to session...")
             session.addOutput(movieOutput)
             self.videoOutput = movieOutput
-            print("[Video] ✅ Movie output added successfully")
+            Log.video.info("✅ Movie output added successfully")
         } else {
-            print("[Video] ❌ Cannot add movie output to session")
+            Log.video.error("❌ Cannot add movie output to session")
         }
 
         // Set capture session on main thread so SwiftUI can react
         DispatchQueue.main.async {
             self.captureSession = session
-            print("[Video] 🎥 Capture session assigned to @Published property")
+            Log.video.debug("🎥 Capture session assigned to @Published property")
         }
 
-        print("[Video] 🎥 Capture session configured, starting session on background thread...")
+        Log.video.debug("🎥 Capture session configured, starting session on background thread...")
 
         DispatchQueue.global(qos: .userInitiated).async {
-            print("[Video] 🎥 Calling session.startRunning()...")
+            Log.video.debug("🎥 Calling session.startRunning()...")
             session.startRunning()
-            print("[Video] ✅ Session is running: \(session.isRunning)")
+            Log.video.info("✅ Session is running: \(session.isRunning)")
 
             // Wait a moment for the session to stabilize, then call completion
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                print("[Video] ✅ Session ready, calling completion handler")
+                Log.video.info("✅ Session ready, calling completion handler")
                 completion()
             }
         }
 
-        print("[Video] 🎥 configureCaptureSession END (session starting asynchronously)")
+        Log.video.debug("🎥 configureCaptureSession END (session starting asynchronously)")
     }
 
     func startRecording(to fileURL: URL) {
-        print("[Video] 📹 startRecording(to:) called with URL: \(fileURL.path)")
+        Log.video.debug("📹 startRecording(to:) called with URL: \(fileURL.path)")
 
         guard let output = videoOutput else {
-            print("[Video] ❌ videoOutput is nil, cannot start recording")
+            Log.video.error("❌ videoOutput is nil, cannot start recording")
             return
         }
 
         guard !output.isRecording else {
-            print("[Video] ⚠️ Already recording, ignoring startRecording call")
+            Log.video.warning("⚠️ Already recording, ignoring startRecording call")
             return
         }
 
@@ -1385,21 +1365,37 @@ class VideoRecordingManager: NSObject, ObservableObject {
 
             if connection.isVideoRotationAngleSupported(rotationAngle) {
                 connection.videoRotationAngle = rotationAngle
-                print("[Video] 📱 Recording orientation set to angle: \(rotationAngle)")
+                Log.video.debug("📱 Recording orientation set to angle: \(rotationAngle)")
             }
         }
 
-        print("[Video] 📹 Calling AVCaptureMovieFileOutput.startRecording...")
+        Log.video.debug("📹 Calling AVCaptureMovieFileOutput.startRecording...")
         output.startRecording(to: fileURL, recordingDelegate: self)
         currentVideoURL = fileURL
 
-        print("[Video] ✅ Started recording to: \(fileURL.lastPathComponent)")
+        Log.video.info("✅ Started recording to: \(fileURL.lastPathComponent)")
     }
 
-    func stopRecording() {
-        guard let output = videoOutput, output.isRecording else { return }
-        output.stopRecording()
-        print("[Video] Stopped recording")
+    /// Stops the movie file output and suspends until AVFoundation reports the file is finished.
+    /// Returns the finalized file URL, or nil if nothing was recording or writing failed.
+    func stopRecording() async -> URL? {
+        guard let output = videoOutput, output.isRecording else { return nil }
+        if let pending = stopContinuation {
+            // A stop is already in flight; don't leak the earlier continuation.
+            stopContinuation = nil
+            pending.resume(returning: nil)
+        }
+        Log.video.debug("Stopping recording, waiting for file to finalize")
+        return await withCheckedContinuation { continuation in
+            stopContinuation = continuation
+            output.stopRecording()
+        }
+    }
+
+    private func recordingDidFinish(url: URL?) {
+        let continuation = stopContinuation
+        stopContinuation = nil
+        continuation?.resume(returning: url)
     }
 
     func stopCaptureSession() {
@@ -1408,14 +1404,14 @@ class VideoRecordingManager: NSObject, ObservableObject {
         Task.detached {
             if session.isRunning {
                 session.stopRunning()
-                print("[Video] 📹 Capture session stopped - camera/mic released")
+                Log.video.debug("📹 Capture session stopped - camera/mic released")
             }
         }
 
         // Clear the session reference (already on MainActor)
         self.captureSession = nil
         self.videoOutput = nil
-        print("[Video] 📹 Capture session cleaned up")
+        Log.video.debug("📹 Capture session cleaned up")
     }
     
     // MARK: - Camera Device Selection
@@ -1429,28 +1425,36 @@ class VideoRecordingManager: NSObject, ObservableObject {
         )
         
         if let preferredDevice = discoverySession.devices.first {
-            print("[Video] 🎥 Using preferred camera: \(cameraDeviceType.displayName)")
+            Log.video.debug("🎥 Using preferred camera: \(self.cameraDeviceType.displayName)")
             return preferredDevice
         }
         
         // Fall back to wide angle camera if preferred isn't available
-        print("[Video] 🎥 Preferred camera \(cameraDeviceType.displayName) not available, falling back to wide angle")
+        Log.video.warning("🎥 Preferred camera \(self.cameraDeviceType.displayName) not available, falling back to wide angle")
         return AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back)
     }
 }
 
 extension VideoRecordingManager: AVCaptureFileOutputRecordingDelegate {
     nonisolated func fileOutput(_ output: AVCaptureFileOutput, didStartRecordingTo fileURL: URL, from connections: [AVCaptureConnection]) {
-        print("[Video] ✅ DELEGATE: Recording started successfully to: \(fileURL.lastPathComponent)")
-        print("[Video] ✅ DELEGATE: Connections count: \(connections.count)")
+        Log.video.info("✅ DELEGATE: Recording started successfully to: \(fileURL.lastPathComponent)")
+        Log.video.info("✅ DELEGATE: Connections count: \(connections.count)")
     }
 
     nonisolated func fileOutput(_ output: AVCaptureFileOutput, didFinishRecordingTo outputFileURL: URL, from connections: [AVCaptureConnection], error: Error?) {
-        if let error = error {
-            print("[Video] ❌ DELEGATE: Recording error: \(error.localizedDescription)")
-            print("[Video] ❌ DELEGATE: Error code: \((error as NSError).code)")
-            return
+        // AVFoundation reports some benign conditions (e.g. max duration reached) as errors
+        // while still writing a playable file; honour its "successfully finished" flag.
+        var finishedURL: URL? = outputFileURL
+        if let error {
+            let info = (error as NSError).userInfo
+            let stillUsable = (info[AVErrorRecordingSuccessfullyFinishedKey] as? Bool) ?? false
+            Log.video.error("❌ DELEGATE: Recording error (\((error as NSError).code)): \(error.localizedDescription); file usable: \(stillUsable)")
+            if !stillUsable { finishedURL = nil }
+        } else {
+            Log.video.info("✅ DELEGATE: Recording finished successfully: \(outputFileURL.lastPathComponent)")
         }
-        print("[Video] ✅ DELEGATE: Recording finished successfully: \(outputFileURL.path)")
+        Task { @MainActor in
+            self.recordingDidFinish(url: finishedURL)
+        }
     }
 }

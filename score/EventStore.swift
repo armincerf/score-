@@ -7,6 +7,7 @@
 
 import Foundation
 import SwiftData
+import os
 
 class EventStore {
     private let modelContext: ModelContext
@@ -32,7 +33,7 @@ class EventStore {
         modelContext.insert(storedEvent)
         try modelContext.save()
 
-        print("[EventStore] Appended \(event.eventType) event #\(event.sequenceNumber) for match \(event.matchId)")
+        Log.store.debug("Appended \(event.eventType.rawValue) event #\(event.sequenceNumber) for match \(event.matchId)")
     }
 
     // MARK: - Query Events
@@ -84,7 +85,7 @@ class EventStore {
         modelContext.insert(match)
         try modelContext.save()
 
-        print("[EventStore] Created match: \(matchName)")
+        Log.store.info("Created match: \(matchName)")
         return match
     }
 
@@ -129,7 +130,7 @@ class EventStore {
         modelContext.delete(match)
         try modelContext.save()
 
-        print("[EventStore] Deleted match \(id) and \(events.count) events")
+        Log.store.info("Deleted match \(id) and \(events.count) events")
     }
 
     // MARK: - Undo Support
@@ -142,7 +143,7 @@ class EventStore {
         event.isUndone = true
         try modelContext.save()
 
-        print("[EventStore] Marked event #\(event.sequenceNumber) as undone")
+        Log.store.debug("Marked event #\(event.sequenceNumber) as undone")
     }
 
     // MARK: - Current Game Events

@@ -7,6 +7,7 @@
 
 import SwiftUI
 import SwiftData
+import os
 
 @main
 struct scoreApp: App {
@@ -37,7 +38,7 @@ struct scoreApp: App {
                 modelContext: context
             ))
 
-            print("[App] SwiftData initialized successfully")
+            Log.app.debug("SwiftData initialized successfully")
         } catch {
             fatalError("Failed to create ModelContainer: \(error)")
         }

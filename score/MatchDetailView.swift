@@ -8,6 +8,7 @@
 import SwiftUI
 import AVKit
 import FoundationModels
+import os
 
 struct MatchDetailView: View {
     let match: MatchResult
@@ -155,11 +156,7 @@ struct MatchDetailView: View {
                 .cornerRadius(12)
 
                 // AI Match Summary
-                if #available(iOS 26.0, *) {
-                    MatchSummaryContainer(matchResult: match, allMatches: allMatches)
-                } else {
-                    MatchSummaryFallbackContainer(matchResult: match)
-                }
+                MatchSummaryContainer(matchResult: match, allMatches: allMatches)
                 
                 // Match Statistics
                 VStack(alignment: .leading, spacing: 12) {
@@ -366,35 +363,35 @@ struct MatchDetailView: View {
 
     private func loadVideos() {
         // Debug logging
-        print("[MatchDetail] Loading videos for match")
-        print("[MatchDetail] Highlight URL: \(match.highlightVideoURL ?? "nil")")
-        print("[MatchDetail] Full video URL: \(match.fullVideoURL ?? "nil")")
+        Log.ui.debug("Loading videos for match")
+        Log.ui.debug("Highlight URL: \(match.highlightVideoURL ?? "nil")")
+        Log.ui.debug("Full video URL: \(match.fullVideoURL ?? "nil")")
 
         // Load highlight reel
         if let videoURLString = match.highlightVideoURL,
            let url = URL(string: videoURLString) {
             let exists = FileManager.default.fileExists(atPath: url.path)
-            print("[MatchDetail] Highlight file exists: \(exists) at \(url.path)")
+            Log.ui.debug("Highlight file exists: \(exists) at \(url.path)")
             if exists {
                 highlightPlayer = AVPlayer(url: url)
             }
         } else {
-            print("[MatchDetail] No highlight URL or invalid URL")
+            Log.ui.debug("No highlight URL or invalid URL")
         }
 
         // Load full video
         if let videoURLString = match.fullVideoURL,
            let url = URL(string: videoURLString) {
             let exists = FileManager.default.fileExists(atPath: url.path)
-            print("[MatchDetail] Full video file exists: \(exists) at \(url.path)")
+            Log.ui.debug("Full video file exists: \(exists) at \(url.path)")
             if exists {
                 fullVideoPlayer = AVPlayer(url: url)
             }
         } else {
-            print("[MatchDetail] No full video URL or invalid URL")
+            Log.ui.debug("No full video URL or invalid URL")
         }
 
-        print("[MatchDetail] Available videos count: \(availableVideos.count)")
+        Log.ui.debug("Available videos count: \(availableVideos.count)")
     }
 
     private func formatDuration(_ seconds: TimeInterval) -> String {

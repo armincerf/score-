@@ -90,7 +90,7 @@ struct HomeView: View {
                                 Spacer()
                             }
                             .padding()
-                            .glassEffect(.regular.tint(.orange).interactive())
+                            .glassEffect(.regular.tint(.orange).interactive(), in: .rect(cornerRadius: 16))
                         }
                         .buttonStyle(.plain)
                     }
@@ -108,7 +108,7 @@ struct HomeView: View {
                         }
                         .frame(maxWidth: .infinity)
                         .padding()
-                        .glassEffect(.regular.tint(.green).interactive())
+                        .glassEffect(.regular.tint(.green).interactive(), in: .rect(cornerRadius: 16))
                     }
                     .buttonStyle(.plain)
 
@@ -123,7 +123,7 @@ struct HomeView: View {
                         }
                         .frame(maxWidth: .infinity)
                         .padding()
-                        .glassEffect(.regular.tint(.blue).interactive())
+                        .glassEffect(.regular.tint(.blue).interactive(), in: .rect(cornerRadius: 16))
                     }
                     .buttonStyle(.plain)
 
@@ -140,7 +140,7 @@ struct HomeView: View {
                         }
                         .frame(maxWidth: .infinity)
                         .padding()
-                        .glassEffect(.regular.tint(.purple).interactive())
+                        .glassEffect(.regular.tint(.purple).interactive(), in: .rect(cornerRadius: 16))
                     }
                     .buttonStyle(.plain)
                 }
@@ -186,7 +186,9 @@ struct HomeView: View {
                     }
                 }
                 Button("Delete & Start New", role: .destructive) {
-                    deleteAndStartNew()
+                    Task {
+                        await deleteAndStartNew()
+                    }
                 }
             } message: {
                 Text("You have an active match. Do you want to save it before starting a new one?")
@@ -205,19 +207,15 @@ struct HomeView: View {
         }
     }
 
-    private func deleteActiveMatch() {
-        connectivity.cancelMatch()
-    }
-
-    private func deleteAndStartNew() {
-        deleteActiveMatch()
+    private func deleteAndStartNew() async {
+        await connectivity.cancelMatch()
         prepareMatchName()
         showingNameSheet = true
     }
 
     private func saveAndStartNew() async {
         // Stop recording and save current match
-        let videoURL = connectivity.stopRecording()
+        let videoURL = await connectivity.stopRecording()
         let (fullVideo, highlightReel) = await connectivity.exportMatchVideos(from: videoURL)
         connectivity.endMatch(fullVideoURL: fullVideo, highlightVideoURL: highlightReel)
 
