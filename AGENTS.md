@@ -74,10 +74,13 @@ score/                      iOS app target
   AI/MatchSummaryModels.swift @Generable MatchAnalysis + Codable cache + MatchContext prompt builder
   AI/MatchSummaryService.swift FoundationModels session; availability + errors
   AI/MatchSummaryView.swift   Summary card, loading/error/unavailable states, container with cache
+  AppIcon.icon/               App icon (Icon Composer document, see "Icon")
 scorewatch Watch App/       watchOS target (no shared module: ScoreState.swift is a COPY of the phone's)
   ScoreWatchApp.swift, ContentView.swift (3-page TabView: end-game / scoring / highlight), WatchSessionManager.swift, ScoreState.swift, Log.swift
+  AppIcon.icon/               Watch app icon (same artwork, circular)
 scoreTests/                 Swift Testing suites (@testable import score)
 scripts/                    xcb.sh (xcodebuild filter), deploy-device.sh (devicectl install), sync-xcode-skills.sh, hooks/
+docs/icons/                 Rendered icon previews (ictool exports)
 .github/workflows/ci.yml    lint (macos-26) + build/test (xcode-27 image)
 ```
 
@@ -168,6 +171,36 @@ from Bash, keep ids 24 hex chars and unique, then verify with
 `plutil -lint score.xcodeproj/project.pbxproj && xcodebuild -list -project score.xcodeproj`
 and a `make build`. Shared schemes live in `score.xcodeproj/xcshareddata/xcschemes/`.
 `xcuserdata` is gitignored.
+
+## Icon
+
+- Both app icons are Icon Composer documents (Liquid Glass): `score/AppIcon.icon` and
+  `scorewatch Watch App/AppIcon.icon`. They are the targets' `AppIcon`
+  (`ASSETCATALOG_COMPILER_APPICON_NAME`); the synchronized folders pick them up and actool
+  compiles them into `Assets.car`. There is no `AppIcon.appiconset` in either asset catalog
+  any more; don't add one back.
+- Each document is `icon.json` plus white 1024x1024 SVG layers in `Assets/` (`rubber`, `wood`,
+  `ball`, `trail`). Colours, the background gradient, glass, shadows and the light, dark and
+  tinted variants all live in `icon.json` (`fill-specializations`, `opacity-specializations`).
+  The first group in `groups` is drawn on top.
+- The iOS document has `"supported-platforms": {"squares": "shared"}`; the watch document has
+  `{"circles": ["watchOS"]}` and scales every layer to 0.92 (`position.scale`) so the artwork
+  stays inside the circular mask. The SVGs are identical copies: change both documents together.
+- Edit in Icon Composer (Xcode > Open Developer Tool > Icon Composer) or by hand, then preview
+  every rendition and refresh `docs/icons/`:
+
+  ```
+  ictool="/Applications/Xcode.app/Contents/Applications/Icon Composer.app/Contents/Executables/ictool"
+  "$ictool" score/AppIcon.icon --export-image --output-file /tmp/ios-default.png \
+    --platform iOS --rendition Default --width 1024 --height 1024 --scale 1
+  # also --rendition Dark, and --rendition TintedDark --tint-color 0.25 --tint-strength 0.75
+  "$ictool" "scorewatch Watch App/AppIcon.icon" --export-image --output-file /tmp/watch.png \
+    --platform watchOS --rendition Default --width 1024 --height 1024 --scale 1
+  ```
+
+  Run `ictool` by its full path (it finds its helper `icrtool` next to itself). After a build,
+  `xcrun assetutil --info <app>/Assets.car | grep '"Name" : "AppIcon"'` shows the compiled icon
+  and the built `Info.plist` has `CFBundleIcons` / `CFBundleIconName = AppIcon`.
 
 ## Gotchas
 
