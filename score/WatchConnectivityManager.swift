@@ -131,6 +131,7 @@ class WatchConnectivityManager: NSObject {
 
         // Load active match if exists
         loadActiveMatch()
+        loadMatchHistory()
     }
 
     // MARK: - State Management
@@ -176,7 +177,10 @@ class WatchConnectivityManager: NSObject {
         do {
             guard let match = try eventStore.getMatch(id: matchId) else { return }
             let events = try eventStore.getEvents(matchId: matchId)
-            scoreState = try stateProjector.project(events: events, matchMetadata: match)
+            var projected = try stateProjector.project(events: events, matchMetadata: match)
+            // A projection covers the active match only; keep the finished matches loaded at launch
+            projected.matchHistory = scoreState.matchHistory
+            scoreState = projected
             syncCaches(with: scoreState)
         } catch {
             Log.match.error("Error refreshing state: \(error)")
@@ -1081,8 +1085,9 @@ class WatchConnectivityManager: NSObject {
         fullVideoURL: URL?,
         highlightVideoURL: URL?
     ) throws -> MatchResult {
-        let fullVideoURLString = fullVideoURL?.absoluteString
-        let highlightVideoURLString = highlightVideoURL?.absoluteString
+        // Store-relative file names, so the references survive container moves (see VideoStore)
+        let fullVideoURLString = fullVideoURL.map { VideoStore.storedReference(for: $0) }
+        let highlightVideoURLString = highlightVideoURL.map { VideoStore.storedReference(for: $0) }
 
         let event = MatchEndedEvent(
             matchId: matchId,
@@ -1095,7 +1100,10 @@ class WatchConnectivityManager: NSObject {
         )
         try eventStore.append(event: event)
 
+        // History entries are dated by match start, here and when they are reloaded at launch
+        var startTimestamp = Date()
         if let match = try eventStore.getMatch(id: matchId) {
+            startTimestamp = match.startTimestamp
             match.isActive = false
             match.endTimestamp = Date()
             match.playerOneGames = scoreState.playerOneGames
@@ -1116,7 +1124,7 @@ class WatchConnectivityManager: NSObject {
             playerTwoGames: scoreState.playerTwoGames,
             winner: winner,
             games: scoreState.currentMatchGames,
-            timestamp: Date(),
+            timestamp: startTimestamp,
             fullVideoURL: fullVideoURLString,
             highlightVideoURL: highlightVideoURLString,
             duration: recordingDuration
@@ -1157,26 +1165,111 @@ class WatchConnectivityManager: NSObject {
         }
     }
 
-    func deleteMatchFromHistory(at index: Int) {
-        guard index >= 0 && index < scoreState.matchHistory.count else { return }
+    // MARK: - Match History
 
+    /// Rebuilds `scoreState.matchHistory` from the finished matches in the store, oldest first, so the
+    /// history screens, the next match's first server and the AI head-to-head context survive relaunches.
+    private func loadMatchHistory() {
+        let finished: [StoredMatch]
+        do {
+            // getAllMatches is newest first; history is oldest first (ServingLogic reads `.last`)
+            finished = try eventStore.getAllMatches().filter { !$0.isActive }.reversed()
+        } catch {
+            Log.match.error("Error loading match history: \(error)")
+            return
+        }
+
+        var history: [MatchResult] = []
+        for match in finished {
+            migrateLegacyVideos(of: match)
+            do {
+                let events = try eventStore.getEvents(matchId: match.id)
+                let games = try stateProjector.project(events: events, matchMetadata: match).currentMatchGames
+                history.append(
+                    MatchResult(
+                        id: match.id,
+                        name: match.matchName,
+                        playerOneName: match.playerOneName,
+                        playerTwoName: match.playerTwoName,
+                        playerOneGames: match.playerOneGames,
+                        playerTwoGames: match.playerTwoGames,
+                        winner: match.winner ?? MatchResult.noWinner,
+                        games: games,
+                        timestamp: match.startTimestamp,
+                        fullVideoURL: match.fullVideoURL,
+                        highlightVideoURL: match.highlightVideoURL,
+                        duration: match.totalDuration
+                    ))
+            } catch {
+                Log.match.error("Skipping match \(match.id) in history: \(error)")
+            }
+        }
+        scoreState.matchHistory = history
+        Log.match.info("Loaded \(history.count) finished matches into history")
+    }
+
+    /// Best effort: moves videos still referenced at their legacy absolute location (tmp/, which iOS purges)
+    /// into VideoStore and points the match at the new file names. Missing files are left referenced as-is.
+    private func migrateLegacyVideos(of match: StoredMatch) {
+        func migrated(_ reference: String?, kind: VideoStore.Kind) -> String? {
+            guard let source = VideoStore.resolve(reference) else { return reference }
+            let current = VideoStore.storedReference(for: source)
+            guard current != source.lastPathComponent else { return current }  // already in the store
+            let fileManager = FileManager.default
+            let destination = VideoStore.fileURL(matchId: match.id, kind: kind)
+            // A store file for this match and kind is the canonical copy (e.g. moved on an earlier launch whose
+            // save failed). Otherwise take the legacy file at its recorded path or, because an app update can
+            // move the container, under the same name in the current tmp/.
+            if !fileManager.fileExists(atPath: destination.path) {
+                let candidates = [source, URL.temporaryDirectory.appending(path: source.lastPathComponent)]
+                guard let legacy = candidates.first(where: { fileManager.fileExists(atPath: $0.path) }) else {
+                    return reference
+                }
+                do {
+                    try fileManager.moveItem(at: legacy, to: destination)
+                    Log.match.info("Moved legacy video \(legacy.lastPathComponent) to \(destination.lastPathComponent)")
+                } catch {
+                    Log.match.warning("Could not move legacy video \(legacy.lastPathComponent): \(error)")
+                    return reference
+                }
+            }
+            return VideoStore.storedReference(for: destination)
+        }
+
+        let full = migrated(match.fullVideoURL, kind: .full)
+        let highlights = migrated(match.highlightVideoURL, kind: .highlights)
+        guard full != match.fullVideoURL || highlights != match.highlightVideoURL else { return }
+        match.fullVideoURL = full
+        match.highlightVideoURL = highlights
+        do {
+            try eventStore.updateMatch(match)
+        } catch {
+            Log.match.error("Error saving migrated video references for match \(match.id): \(error)")
+        }
+    }
+
+    /// Deletes a finished match everywhere: its StoredMatch and events, its video files and its history entry.
+    func deleteMatchFromHistory(at index: Int) {
+        guard scoreState.matchHistory.indices.contains(index) else { return }
         let match = scoreState.matchHistory[index]
 
-        // Delete associated video files if they exist
-        if let fullVideoURLString = match.fullVideoURL,
-            let fullVideoURL = URL(string: fullVideoURLString)
-        {
-            try? FileManager.default.removeItem(at: fullVideoURL)
+        do {
+            try eventStore.deleteMatch(id: match.id)
+        } catch EventStoreError.matchNotFound {
+            Log.match.warning("Match \(match.id) was not in the store; removing it from history only")
+        } catch {
+            Log.match.error("Error deleting match \(match.id): \(error)")
+            return  // keep the entry so the list matches what will reload on next launch
         }
-        if let highlightVideoURLString = match.highlightVideoURL,
-            let highlightVideoURL = URL(string: highlightVideoURLString)
-        {
-            try? FileManager.default.removeItem(at: highlightVideoURL)
-        }
+
+        // Legacy references point outside the store, so remove their files explicitly as well
+        VideoStore.remove(match.fullVideoURL)
+        VideoStore.remove(match.highlightVideoURL)
+        VideoStore.removeAll(matchId: match.id)
 
         scoreState.matchHistory.remove(at: index)
         sendScore()
-        Log.match.info("Deleted match at index \(index)")
+        Log.match.info("Deleted match \(match.id) from history")
     }
 
     /// Resets all match-scoped manager state (IDs, timers, URLs, etc.)

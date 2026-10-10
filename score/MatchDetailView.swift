@@ -32,19 +32,14 @@ struct MatchDetailView: View {
         return formatter
     }
 
-    private var hasHighlightVideo: Bool {
-        guard let urlString = match.highlightVideoURL,
-            let url = URL(string: urlString)
-        else { return false }
-        return FileManager.default.fileExists(atPath: url.path)
+    /// The file behind a stored video reference, or nil when there is none or it is not on disk.
+    private static func existingVideo(_ reference: String?) -> URL? {
+        VideoStore.exists(reference) ? VideoStore.resolve(reference) : nil
     }
 
-    private var hasFullVideo: Bool {
-        guard let urlString = match.fullVideoURL,
-            let url = URL(string: urlString)
-        else { return false }
-        return FileManager.default.fileExists(atPath: url.path)
-    }
+    private var highlightVideoURL: URL? { Self.existingVideo(match.highlightVideoURL) }
+
+    private var fullVideoURL: URL? { Self.existingVideo(match.fullVideoURL) }
 
     private struct VideoOption {
         let title: String
@@ -56,11 +51,11 @@ struct MatchDetailView: View {
     private var availableVideos: [VideoOption] {
         var videos: [VideoOption] = []
 
-        if hasHighlightVideo, let urlString = match.highlightVideoURL, let url = URL(string: urlString) {
+        if let url = highlightVideoURL {
             videos.append(VideoOption(title: "Highlight Reel", player: highlightPlayer, url: url, icon: "star.fill"))
         }
 
-        if hasFullVideo, let urlString = match.fullVideoURL, let url = URL(string: urlString) {
+        if let url = fullVideoURL {
             videos.append(VideoOption(title: "Full Match", player: fullVideoPlayer, url: url, icon: "video.fill"))
         }
 
@@ -68,11 +63,11 @@ struct MatchDetailView: View {
     }
 
     private var playerOneName: String {
-        match.playerOneName ?? extractPlayerName(from: match.name, playerNumber: 1) ?? "Player 1"
+        match.playerOneName ?? "Player 1"
     }
 
     private var playerTwoName: String {
-        match.playerTwoName ?? extractPlayerName(from: match.name, playerNumber: 2) ?? "Player 2"
+        match.playerTwoName ?? "Player 2"
     }
 
     private var resultBadgeText: String {
@@ -371,30 +366,17 @@ struct MatchDetailView: View {
         Log.ui.debug("Highlight URL: \(match.highlightVideoURL ?? "nil")")
         Log.ui.debug("Full video URL: \(match.fullVideoURL ?? "nil")")
 
-        // Load highlight reel
-        if let videoURLString = match.highlightVideoURL,
-            let url = URL(string: videoURLString)
-        {
-            let exists = FileManager.default.fileExists(atPath: url.path)
-            Log.ui.debug("Highlight file exists: \(exists) at \(url.path)")
-            if exists {
-                highlightPlayer = AVPlayer(url: url)
-            }
+        // References are store file names (or legacy absolute URLs); VideoStore resolves both
+        if let url = highlightVideoURL {
+            highlightPlayer = AVPlayer(url: url)
         } else {
-            Log.ui.debug("No highlight URL or invalid URL")
+            Log.ui.debug("No highlight video on disk")
         }
 
-        // Load full video
-        if let videoURLString = match.fullVideoURL,
-            let url = URL(string: videoURLString)
-        {
-            let exists = FileManager.default.fileExists(atPath: url.path)
-            Log.ui.debug("Full video file exists: \(exists) at \(url.path)")
-            if exists {
-                fullVideoPlayer = AVPlayer(url: url)
-            }
+        if let url = fullVideoURL {
+            fullVideoPlayer = AVPlayer(url: url)
         } else {
-            Log.ui.debug("No full video URL or invalid URL")
+            Log.ui.debug("No full video on disk")
         }
 
         Log.ui.debug("Available videos count: \(availableVideos.count)")
@@ -404,28 +386,6 @@ struct MatchDetailView: View {
 // MARK: - Formatting helpers
 
 extension MatchDetailView {
-    private func extractPlayerName(from matchName: String?, playerNumber: Int) -> String? {
-        guard let name = matchName else { return nil }
-
-        // Extract base name (before timestamp)
-        let baseName: String
-        if let dashRange = name.range(of: " - ", options: .backwards) {
-            baseName = String(name[..<dashRange.lowerBound])
-        } else {
-            baseName = name
-        }
-
-        // Split by " vs "
-        if let vsRange = baseName.range(of: " vs ") {
-            if playerNumber == 1 {
-                return String(baseName[..<vsRange.lowerBound])
-            }
-            return String(baseName[vsRange.upperBound...])
-        }
-
-        return nil
-    }
-
     private func formatDuration(_ seconds: TimeInterval) -> String {
         let minutes = Int(seconds) / 60
         let secs = Int(seconds) % 60
@@ -600,6 +560,8 @@ struct HighlightRow: View {
         MatchDetailView(
             match: MatchResult(
                 name: "John vs Jane - Nov 29, 3:45 PM",
+                playerOneName: "John",
+                playerTwoName: "Jane",
                 playerOneGames: 3,
                 playerTwoGames: 1,
                 winner: 1,

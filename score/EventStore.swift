@@ -134,7 +134,13 @@ class EventStore {
 
         // Delete the match itself
         modelContext.delete(match)
-        try modelContext.save()
+        do {
+            try modelContext.save()
+        } catch {
+            // Undo the pending deletes, or the next unrelated save would commit them after the caller gave up
+            modelContext.rollback()
+            throw error
+        }
 
         Log.store.info("Deleted match \(id) and \(events.count) events")
     }

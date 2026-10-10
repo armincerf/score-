@@ -44,7 +44,7 @@ score/                      iOS app target
   ContentView.swift           Root view -> HomeView
   HomeView.swift              Start match (player-name sheet), resume, history, settings
   GameView.swift              Live match: camera preview, status bar, ScoringPanel, alerts, export sheet
-  MatchHistoryView.swift      List of finished matches (@Query on StoredMatch)
+  MatchHistoryView.swift      List of finished matches (scoreState.matchHistory, reloaded from the store at launch)
   MatchDetailView.swift       One match: videos, AI summary, stats, games, highlights
   CameraSettingsView.swift    Lens/quality/enabled prefs + live preview; CameraDeviceType, VideoQualityPreset
   CameraPreviewManager.swift  Settings preview session (serial session queue, permission state) + CameraPreviewUIView (horizon-level preview)
@@ -54,6 +54,7 @@ score/                      iOS app target
   MediaExportService.swift    Full-video + highlight-reel export (AVVideoComposition.Configuration, export(to:as:))
   MockVideoGenerator.swift    Synthetic video for the simulator (no camera)
   VideoTransferable.swift     ShareLink/Transferable wrapper for exported videos
+  VideoStore.swift            Application Support/Videos: per-match file names, stored references, legacy URL resolve
   ScoreState.swift            In-memory match state + PointEvent/GameResult/MatchResult/HighlightClip + watch dictionary codec
   ServingLogic.swift          Pure serving rules (first server, rotation, serve stats)
   ScoreAnnouncementUtils.swift Pure announcement text + game/match-point/won checks
@@ -94,7 +95,9 @@ scripts/                    xcb.sh (xcodebuild filter), deploy-device.sh (device
   and `highlightConfirmed` immediately after a highlight.
 - **Every scoring action is an event** appended through `EventStore` (sequence-numbered,
   JSON payload) *and* mirrored into `scoreState` for the UI. On launch, the active match is
-  rebuilt by `StateProjector.project`. Undo marks an event `isUndone` and appends an
+  rebuilt by `StateProjector.project`, and `scoreState.matchHistory` is rebuilt (oldest
+  first) from the finished `StoredMatch`es; anything that re-projects the active match must
+  keep that history. Undo marks an event `isUndone` and appends an
   `eventUndone` event; projection skips undone events.
 - **Recording**: `startRecording()` arms a 0.5 s timer that drives `recordingDuration`;
   point/highlight video timestamps are read from it. `stopRecording()` is async and returns
@@ -173,8 +176,6 @@ and a `make build`. Shared schemes live in `score.xcodeproj/xcshareddata/xcschem
 
 - `WatchConnectivityManager` is a god object (match lifecycle + scoring + recording +
   export + AI + transport). Split the match lifecycle into its own `@Observable` type.
-- `scoreState.matchHistory` is in-memory only; `ServingLogic.determineInitialServer` and
-  the AI head-to-head context therefore only see matches from the current app session.
 - The watch target duplicates `ScoreState.swift`; a shared Swift package would remove the
   drift risk.
 - `WatchSyncState` is unused by the live protocol (full `ScoreState` dictionaries are sent,
