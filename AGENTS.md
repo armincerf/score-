@@ -28,6 +28,7 @@ make lint         # swiftlint --strict + swift-format lint (what CI runs)
 make format       # swift-format + swiftlint --fix
 make check        # lint + build + build-watch + test  (the gate before pushing)
 make setup        # brew tools, git hooks, Apple's Xcode agent skills
+make deploy       # Release build -> connected iPhone (+ paired watch) via devicectl
 ```
 
 Output is filtered through `xcbeautify --quiet`: only errors, warnings and test results are
@@ -72,7 +73,7 @@ score/                      iOS app target
 scorewatch Watch App/       watchOS target (no shared module: ScoreState.swift is a COPY of the phone's)
   ScoreWatchApp.swift, ContentView.swift (3-page TabView: end-game / scoring / highlight), WatchSessionManager.swift, ScoreState.swift, Log.swift
 scoreTests/                 Swift Testing suites (@testable import score)
-scripts/                    xcb.sh (xcodebuild filter), sync-xcode-skills.sh, hooks/ (Claude Code hooks)
+scripts/                    xcb.sh (xcodebuild filter), deploy-device.sh (devicectl install), sync-xcode-skills.sh, hooks/
 .github/workflows/ci.yml    lint (macos-26) + build/test (xcode-27 image)
 ```
 

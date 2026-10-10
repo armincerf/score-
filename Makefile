@@ -22,7 +22,7 @@ XCB          := scripts/xcb.sh
 T ?=
 ONLY := $(if $(T),-only-testing:$(T),)
 
-.PHONY: help setup build build-watch test test-summary lint format check skills clean sim-list
+.PHONY: help setup build build-watch test test-summary lint format check skills clean sim-list deploy install
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -68,6 +68,12 @@ check: lint build build-watch test ## Full gate: lint + build + build-watch + te
 
 skills: ## Export Apple's Xcode agent skills into .claude/skills (gitignored)
 	@scripts/sync-xcode-skills.sh
+
+deploy: ## Build Release for a connected iPhone and install + launch it (devicectl)
+	@scripts/deploy-device.sh
+
+install: ## Install the last device build without rebuilding
+	@scripts/deploy-device.sh --no-build
 
 sim-list: ## List available iOS simulators
 	@xcrun simctl list devices available | grep -E "iPhone|iPad|Watch"
