@@ -47,7 +47,7 @@ score/                      iOS app target
   MatchHistoryView.swift      List of finished matches (@Query on StoredMatch)
   MatchDetailView.swift       One match: videos, AI summary, stats, games, highlights
   CameraSettingsView.swift    Lens/quality/enabled prefs + live preview; CameraDeviceType, VideoQualityPreset
-  CameraPreviewManager.swift  AVCaptureSession for the settings preview only
+  CameraPreviewManager.swift  Settings preview session (serial session queue, permission state) + CameraPreviewUIView (horizon-level preview)
   WatchConnectivityManager.swift           Phone hub: match lifecycle, scoring, recording, export, AI (see "Known debt")
   WatchConnectivityManager+WCSession.swift WCSessionDelegate: command dispatch from the watch
   VideoRecordingManager.swift AVCaptureMovieFileOutput recording; async stop waits for file finalization
@@ -154,6 +154,8 @@ and a `make build`. Shared schemes live in `score.xcodeproj/xcshareddata/xcschem
   phone sets it in `startRecording()`).
 - `AVCaptureSession.startRunning()` blocks; it runs on a detached task, and recording
   starts ~0.5 s later, so early video timestamps are offset by the session start-up time.
+- `AVCaptureDevice.RotationCoordinator` reports 0 degrees while its preview layer is not in a
+  window, so `CameraPreviewUIView` rebuilds it in `didMoveToWindow` (and per device change).
 - `UIDevice.current.orientation` can be `.faceUp`/`.unknown`; export orientation is
   captured at the first point and falls back to landscape.
 - GitHub's `xcode-27` runner image is a preview; if it disappears, switch CI to
