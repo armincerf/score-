@@ -824,11 +824,16 @@ class WatchConnectivityManager: NSObject {
             VideoQualityPreset.from(string: preferencesService.getCameraSettings().qualityPreset))
         Log.match.info("🎬 Exporting \(segmentURLs.count) segment(s), \(Int(timeline.totalDuration))s of footage")
 
+        // Which way up each segment really is, from the pictures (Vision body pose; logged per segment)
+        let corrections = await VideoOrientationDetector.corrections(for: segmentURLs)
+        Log.match.info("🧭 Orientation corrections per segment: \(corrections.map(\.rawValue), privacy: .public)")
+
         let fullURL = VideoStore.fileURL(matchId: matchId, kind: .full)
         var fullVideo: URL?
         do {
             let result = try await MediaExportService.exportFullVideo(
                 segments: segmentURLs,
+                corrections: corrections,
                 to: fullURL,
                 quality: quality,
                 progressHandler: { progress in progressHandler(progress * 0.5) }

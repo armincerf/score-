@@ -59,6 +59,8 @@ score/                      iOS app target
   WatchConnectivityManager+WCSession.swift WCSessionDelegate: actionId dedupe + command dispatch from the watch
   VideoRecordingManager.swift Capture session + movie output; CaptureState (interrupted/failed...), segment callbacks, rotation coordinator
   RecordingTimeline.swift     RecordingSegment + wall-clock offset -> concatenated-video time mapping (gaps clamp)
+  VideoRotationCorrection.swift Extra clockwise turn a segment needs beyond its metadata (transform, EXIF orientation) + OrientationDecision
+  VideoOrientationDetector.swift Samples frames, scores upright people per orientation with Vision body pose, decides; BodyPoseEvidence
   AudioSessionCoordinator.swift Owns AVAudioSession for a match (play-and-record to speaker; released at match end)
   MediaExportService.swift    Concatenates segments upright (per-track preferredTransform) + cuts the reel; export(to:as:) with progress
   ReelScoreboard.swift        Broadcast-style scoreboard for the reel: state, pixel layout per video size, SwiftUI view, ImageRenderer
@@ -89,7 +91,8 @@ scorewatch Watch App/       watchOS target (no shared module: ScoreState.swift i
   AppIcon.icon/               Watch app icon (same artwork, circular)
 scoreTests/                 Swift Testing suites (@testable import score)
 scripts/                    xcb.sh (xcodebuild filter), deploy-device.sh (devicectl install), screenshot.sh, sync-xcode-skills.sh, hooks/,
-                            testflight.sh (archive + upload), asc.py (App Store Connect API: testers, distribution)
+                            testflight.sh (archive + upload), asc.py (App Store Connect API: testers, distribution),
+                            detect-orientation.sh + orientation/ (the app's orientation detector as a Mac CLI)
 docs/icons/                 Rendered icon previews (ictool exports)
 docs/plans/                 Design notes for larger pieces of work (highlight-reel.md: orientation fix + scoreboard overlay)
 docs/screenshots/           Home screen renders (make screenshot output, refresh when the home screen changes)
@@ -212,8 +215,19 @@ make screenshot OUT=.build/shots/home-ax.png NO_BUILD=1 \
 - `.build/shots/` is gitignored; the home screen's renders live in `docs/screenshots/` (`sips -Z 1000` copies):
   refresh them when the home screen changes.
 
-## Highlight reel overlay
+## Highlight reel
 
+- **Orientation** comes from the pictures as well as the metadata: before the full export,
+  `exportMatchVideos` runs `VideoOrientationDetector` on every segment (5 frames at 30-70 %, Vision
+  `DetectHumanBodyPoseRequest` at the four EXIF orientations; a person counts by neck-over-root confidence
+  weighted by how upright the torso is) and `OrientationDecision` turns a clear winner (>= 1.0 and >= 1.5x the
+  runner-up) into a `VideoRotationCorrection` that `uprightGeometry` applies after the preferredTransform.
+  Scores and decisions are logged (`Log.video` "Orientation <file>: none=... -> ...") for real-footage problems.
+  Conventions are pinned by `OrientationConventionTests` (Vision as the oracle) and `VideoOrientationTests`.
+- Vision's body pose request has **no compute device on the iOS simulator** (it throws, the detector keeps
+  `.none`). Check detection on the Mac instead: `scripts/detect-orientation.sh <video>...` prints the scores
+  of any recording, and `--selftest <photo of people> <dir>` turns the photo each way and checks the decision.
+  Orientation test frames land in `.build/shots/reel/orientation/`.
 - The reel scoreboard is drawn per frame with Core Image (`ReelOverlayComposer`, iOS 26
   `AVVideoComposition(applyingFiltersTo:applier:)`): each frame is a pure function of its composition
   time, so it works for export and playback and is testable. Do not switch it to
@@ -364,7 +378,17 @@ a new one, so that is harmless.
   window, so `CameraPreviewUIView` rebuilds it in `didMoveToWindow` (and per device change).
 - Orientation comes from `AVCaptureDevice.RotationCoordinator` (capture and preview), never
   `UIDevice.current.orientation`, which is `.faceUp`/`.unknown` for a phone lying flat. Export
-  rotates each segment by its own `preferredTransform`.
+  rotates each segment by its own `preferredTransform`, then by the correction the orientation
+  detector found in its pictures (see "Highlight reel").
+- `MockVideoGenerator` draws its text vertically mirrored ("MOCK MATCH VIDEO" sits at the bottom,
+  upside down and mirrored): UIKit string drawing into an unflipped CGContext. Tests compare the
+  source with the export rather than assume where the caption is.
+- Mock footage has no audio track. `makeComposition` drops the composition's audio track when nothing
+  was inserted into it; an empty one made every export of silent footage fail with -11838.
+- Vision text recognition on iOS 27 reads text at any rotation, so "can it read it" is no orientation
+  oracle; where it puts the text box (normalized, origin bottom-left) is.
+- A failing `make test` can sit ~10 minutes in `simctl diagnose` before printing results (xcodebuild
+  collects diagnostics on failure); while iterating, call xcodebuild with `-collect-test-diagnostics never`.
 - If `make test` reports "Failed to install or launch the test runner ... No such process" for
   every test, the simulator is in a bad state (typically after a killed xcodebuild): run
   `make sim-reset`, or add `-parallel-testing-enabled NO` to the xcodebuild test command.
@@ -386,8 +410,9 @@ a new one, so that is harmless.
   `sendScore()` corrects it); the 2 s pending timeout plays an error haptic while a slow live
   send may still land; a tied-score End Game is dropped silently by the phone after the watch
   haptic; `RecentActionIDs` is in-memory only. Fix together with a watch test target.
-- Export renders every segment at the first segment's size (a mid-match orientation change
-  letterboxes); `VideoRecordingManager` start/stop still use detached tasks.
+- Export renders every segment at the first segment's size (a mid-match orientation change, or a
+  segment whose detected correction differs from the first one's by a quarter turn, letterboxes);
+  `VideoRecordingManager` start/stop still use detached tasks.
 - Legacy rows: matches tied on games that pre-date `MatchResult.noWinner` reload as player-2
   wins; an in-progress legacy match loses its tmp recording on upgrade.
 - Several test comments in WatchCommandTests still describe the bugs they were written for.
