@@ -71,6 +71,7 @@ extension WatchConnectivityManager: WCSessionDelegate {
 
         Task { @MainActor in
             self.isWatchReachable = isReachable
+            self.isWatchPaired = isPaired
             self.isWatchAppInstalled = isPaired && isWatchAppInstalled
         }
         Log.match.info(
@@ -79,8 +80,10 @@ extension WatchConnectivityManager: WCSessionDelegate {
     }
 
     nonisolated func sessionWatchStateDidChange(_ session: WCSession) {
-        let installed = session.isPaired && session.isWatchAppInstalled
+        let paired = session.isPaired
+        let installed = paired && session.isWatchAppInstalled
         Task { @MainActor in
+            self.isWatchPaired = paired
             self.isWatchAppInstalled = installed
         }
     }

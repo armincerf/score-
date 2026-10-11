@@ -43,4 +43,21 @@ struct RecentDateStyleTests {
     func style(date: Date, expected: RecentDateStyle) {
         #expect(RecentDateStyle(date: date, now: Self.now, calendar: Self.calendar) == expected)
     }
+
+    @Test("Day counting survives a year boundary")
+    func acrossNewYear() {
+        let now = Self.date(1, 2, 9, year: 2027)
+        #expect(RecentDateStyle(date: Self.date(1, 1, 18, year: 2027), now: now, calendar: Self.calendar) == .yesterday)
+        #expect(RecentDateStyle(date: Self.date(12, 30, 18), now: now, calendar: Self.calendar) == .weekday)
+        #expect(RecentDateStyle(date: Self.date(12, 20, 18), now: now, calendar: Self.calendar) == .dayMonthYear)
+    }
+
+    @Test("Day counting survives the clocks going back (a 25-hour day in London)")
+    func acrossDaylightSavingEnd() {
+        let now = Self.date(10, 26, 9)  // clocks went back on 25 October 2026
+        #expect(RecentDateStyle(date: Self.date(10, 25, 18), now: now, calendar: Self.calendar) == .yesterday)
+        #expect(
+            RecentDateStyle(date: Self.date(10, 25, 0, minute: 30), now: now, calendar: Self.calendar) == .yesterday)
+        #expect(RecentDateStyle(date: Self.date(10, 24, 23), now: now, calendar: Self.calendar) == .weekday)
+    }
 }

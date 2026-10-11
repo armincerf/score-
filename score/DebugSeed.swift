@@ -4,6 +4,7 @@
 //
 //  Sample data for screenshots and manual testing. DEBUG builds only, and only when the app is
 //  launched with one of these arguments (see scripts/screenshot.sh and AGENTS.md, "Screenshots"):
+//    -seedEmpty           remove every stored match (the empty home screen)
 //    -seedSampleMatches   replace every stored match with six finished sample matches
 //    -seedActiveMatch     add an in-progress match (combine with the above for a full home screen)
 //    -showNewMatchSheet   open the new-match sheet as soon as the home screen appears
@@ -20,6 +21,7 @@
         static let playerTwo = "Lucio"
 
         private static let arguments = ProcessInfo.processInfo.arguments
+        static var seedsEmpty: Bool { arguments.contains("-seedEmpty") }
         static var seedsSampleMatches: Bool { arguments.contains("-seedSampleMatches") }
         static var seedsActiveMatch: Bool { arguments.contains("-seedActiveMatch") }
         static var showsNewMatchSheet: Bool { arguments.contains("-showNewMatchSheet") }
@@ -36,7 +38,7 @@
 
         /// Wipes the stored matches and writes the requested sample data. Call before anything reads the store.
         static func applyIfRequested(eventStore: EventStore, modelContext: ModelContext) {
-            guard seedsSampleMatches || seedsActiveMatch else { return }
+            guard seedsEmpty || seedsSampleMatches || seedsActiveMatch else { return }
             do {
                 // Row by row: a batch delete trips over the match <-> events inverse relationship
                 for match in try modelContext.fetch(FetchDescriptor<StoredMatch>()) {

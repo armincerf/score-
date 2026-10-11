@@ -29,9 +29,15 @@ struct HomeView: View {
         NavigationStack {
             HomeContent(
                 history: connectivity.scoreState.matchHistory,
-                activeMatch: connectivity.isRecording ? ActiveMatchSummary(connectivity.scoreState) : nil,
+                // An open match stays on the home screen after a failed save (recording off) so it can be ended again
+                activeMatch: connectivity.currentMatchId == nil
+                    ? nil
+                    : ActiveMatchSummary(
+                        connectivity.scoreState, isLive: connectivity.isRecording,
+                        isDecided: connectivity.matchWonBy != nil),
                 watchStatus: WatchStatus(
-                    isInstalled: connectivity.isWatchAppInstalled, isReachable: connectivity.isWatchReachable),
+                    isPaired: connectivity.isWatchPaired, isInstalled: connectivity.isWatchAppInstalled,
+                    isReachable: connectivity.isWatchReachable),
                 onResume: { showingGame = true }
             )
             .navigationTitle("Table Tennis")
@@ -91,8 +97,8 @@ struct HomeView: View {
     }
 
     private func handleStartNewGame() {
-        if connectivity.isRecording {
-            // Show alert if there's an active match
+        if connectivity.currentMatchId != nil {
+            // Show alert if there's an active match (recording, or unsaved after a failed save)
             showingActiveMatchAlert = true
         } else {
             // No active match, proceed normally

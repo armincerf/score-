@@ -54,7 +54,7 @@ struct MatchHistoryView: View {
                 }
             }
         }
-        .navigationTitle("Match History")
+        .navigationTitle("All Matches")
         .navigationBarTitleDisplayMode(.large)
     }
 }

@@ -27,11 +27,11 @@ struct MatchNameSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("Player 1", text: $player1Name, prompt: Text("Player 1"))
+                    PlayerNameField(number: 1, tint: .blue, name: $player1Name)
                         .focused($focusedField, equals: .player1)
                         .submitLabel(.next)
                         .onSubmit { focusedField = .player2 }
-                    TextField("Player 2", text: $player2Name, prompt: Text("Player 2"))
+                    PlayerNameField(number: 2, tint: .red, name: $player2Name)
                         .focused($focusedField, equals: .player2)
                         .submitLabel(.done)
                         .onSubmit {
@@ -42,7 +42,7 @@ struct MatchNameSheet: View {
                 } header: {
                     Text("Players")
                 } footer: {
-                    Text("Names are remembered for your next match.")
+                    Text("Player 1 serves first. Names are remembered for your next match.")
                 }
                 .textContentType(.name)
                 .textInputAutocapitalization(.words)
@@ -70,6 +70,23 @@ struct MatchNameSheet: View {
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
+    }
+}
+
+/// A name field with the player's number in the colour the app uses for them, so the order stays clear once
+/// both names are filled in.
+struct PlayerNameField: View {
+    let number: Int
+    let tint: Color
+    @Binding var name: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "\(number).circle.fill")
+                .foregroundStyle(tint)
+                .accessibilityHidden(true)
+            TextField("Player \(number)", text: $name, prompt: Text("Player \(number)"))
+        }
     }
 }
 

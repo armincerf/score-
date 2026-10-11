@@ -46,7 +46,7 @@ score/                      iOS app target
   ScoreApp.swift              @main; builds the ModelContainer and WatchConnectivityManager
   ContentView.swift           Root view -> HomeView
   HomeView.swift              Home screen: presentation state, sheets, alerts; New Match flow (active-match alert, name sheet)
-  HomeSections.swift          Home dashboard cards (live match / head-to-head, recent matches, watch status), empty state, New Match bar button
+  HomeSections.swift          Home dashboard cards (active match / head-to-head, recent matches, watch status), empty state, New Match bar button
   MatchNameSheet.swift        New Match sheet: Form with the two player names, Cancel / Start
   HeadToHead.swift            Pure head-to-head record of the latest match's players (wins, draws, matches); AI previousMeetings extends it
   GameView.swift              Live match: camera preview, RecordingStatusBar (capture state), ScoringPanel, alerts
@@ -187,7 +187,7 @@ Look at UI work before declaring it done. `make screenshot` builds a Debug simul
 PNG you can open with the Read tool:
 
 ```
-make screenshot OUT=.build/shots/home.png                       # the app as a new user sees it
+make screenshot OUT=.build/shots/home.png ARGS="-seedEmpty"     # the app as a new user sees it
 make screenshot OUT=.build/shots/home.png ARGS="-seedSampleMatches -seedActiveMatch"
 make screenshot OUT=.build/shots/home-dark.png DARK=1 NO_BUILD=1 ARGS="-seedSampleMatches"
 make screenshot OUT=.build/shots/sheet.png NO_BUILD=1 ARGS="-seedSampleMatches -showNewMatchSheet"
@@ -195,7 +195,8 @@ make screenshot OUT=.build/shots/home-ax.png NO_BUILD=1 \
   ARGS="-seedSampleMatches -UIPreferredContentSizeCategoryName UICTContentSizeCategoryAccessibilityL"
 ```
 
-- Launch arguments are read by `score/DebugSeed.swift` (DEBUG builds only): `-seedSampleMatches`
+- Launch arguments are read by `score/DebugSeed.swift` (DEBUG builds only): `-seedEmpty` removes
+  every stored match (a launch without seed arguments keeps whatever the last run stored); `-seedSampleMatches`
   replaces every stored match with six finished Alex vs Lucio matches (one with no winner, each with
   points, highlights and game events); `-seedActiveMatch` adds a live match 14 minutes in (1-0 in
   games, 5-3 in game two), so the home screen shows its resume state; `-showNewMatchSheet` opens the
@@ -204,8 +205,6 @@ make screenshot OUT=.build/shots/home-ax.png NO_BUILD=1 \
   is UIKit's own Dynamic Type override; check at least `AccessibilityL` for truncation.
 - `scripts/screenshot.sh --udid <UDID> --no-build --wait 5 out.png` targets another simulator or
   reuses the last build; `--wait` lengthens the launch-to-capture delay for slow screens.
-- A launch without seed arguments keeps whatever an earlier seeded launch stored. For the empty
-  home screen, uninstall first: `xcrun simctl uninstall <UDID> armincerf.score`.
 - `.build/shots/` is gitignored; copy anything worth keeping into `docs/`.
 
 ## Icon

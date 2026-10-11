@@ -2,7 +2,7 @@
 //  HomeSections.swift
 //  score
 //
-//  The home screen's sections: the empty state, the dashboard of cards (live match or head-to-head, recent
+//  The home screen's sections: the empty state, the dashboard of cards (active match or head-to-head, recent
 //  matches, Apple Watch status) and the floating New Match button. Each takes only the values it shows.
 //
 
@@ -11,7 +11,7 @@ import UIKit
 
 // MARK: - Inputs
 
-/// The live match as the home screen shows it (a narrow copy of `ScoreState`).
+/// The active match as the home screen shows it (a narrow copy of `ScoreState` plus the manager flags it needs).
 nonisolated struct ActiveMatchSummary: Equatable, Sendable {
     let playerOneName: String
     let playerTwoName: String
@@ -20,8 +20,12 @@ nonisolated struct ActiveMatchSummary: Equatable, Sendable {
     let playerOneScore: Int
     let playerTwoScore: Int
     let startedAt: Date?
+    /// False once recording stopped but the match could not be saved (it can be opened and ended again).
+    let isLive: Bool
+    /// True once a game win decided the match; the game screen offers to end it.
+    let isDecided: Bool
 
-    init(_ state: ScoreState) {
+    init(_ state: ScoreState, isLive: Bool, isDecided: Bool) {
         playerOneName = state.playerOneName ?? String(localized: "Player 1")
         playerTwoName = state.playerTwoName ?? String(localized: "Player 2")
         playerOneGames = state.playerOneGames
@@ -29,28 +33,33 @@ nonisolated struct ActiveMatchSummary: Equatable, Sendable {
         playerOneScore = state.playerOneScore
         playerTwoScore = state.playerTwoScore
         startedAt = state.recordingStartTime
+        self.isLive = isLive
+        self.isDecided = isDecided
     }
 
     var gameNumber: Int { playerOneGames + playerTwoGames + 1 }
 }
 
-/// Apple Watch connection as the home screen shows it.
+/// Apple Watch as the home screen shows it. `notPaired` phones get no watch card at all.
 nonisolated enum WatchStatus: Equatable, Sendable {
-    case connected, notReachable, notInstalled
+    case notPaired, notInstalled, installed, connected
 
-    init(isInstalled: Bool, isReachable: Bool) {
-        if !isInstalled {
+    init(isPaired: Bool, isInstalled: Bool, isReachable: Bool) {
+        if !isPaired {
+            self = .notPaired
+        } else if !isInstalled {
             self = .notInstalled
         } else {
-            self = isReachable ? .connected : .notReachable
+            self = isReachable ? .connected : .installed
         }
     }
 
     var title: LocalizedStringResource {
         switch self {
         case .connected: "Connected"
-        case .notReachable: "Not Reachable"
+        case .installed: "Installed"
         case .notInstalled: "Not Installed"
+        case .notPaired: "No Watch"
         }
     }
 }
@@ -93,24 +102,37 @@ struct HomeContent: View {
 }
 
 /// No matches yet: an explanation above the floating New Match button, with the watch status as a footer.
+/// Centred when it fits, scrolling (at accessibility text sizes) when it does not.
 struct EmptyHome: View {
     let watchStatus: WatchStatus
+    @State private var containerHeight: CGFloat = 0
 
     var body: some View {
-        VStack(spacing: 16) {
-            ContentUnavailableView {
-                Label("No Matches Yet", systemImage: "figure.table.tennis")
-            } description: {
-                Text("Tap New Match to record your first game. Scores, highlights and video are kept here.")
+        ScrollView {
+            VStack(spacing: 16) {
+                ContentUnavailableView {
+                    Label("No Matches Yet", systemImage: "figure.table.tennis")
+                } description: {
+                    Text("Tap New Match to score your first match. Results, highlights and video are kept here.")
+                }
+                if watchStatus != .notPaired {
+                    WatchStatusCard(status: watchStatus)
+                }
             }
-            WatchStatusCard(status: watchStatus)
+            .padding([.horizontal, .bottom])
+            .frame(maxWidth: .infinity, minHeight: containerHeight)
         }
-        .padding([.horizontal, .bottom])
+        .scrollBounceBehavior(.basedOnSize)
+        .onGeometryChange(for: CGFloat.self) {
+            $0.size.height
+        } action: {
+            containerHeight = $0
+        }
         .background(Color(uiColor: .systemGroupedBackground))
     }
 }
 
-/// Hero card (live match, otherwise head-to-head), recent matches and the watch status.
+/// Hero card (active match, otherwise head-to-head), recent matches and the watch status.
 struct HomeDashboard: View {
     let history: [MatchResult]
     let activeMatch: ActiveMatchSummary?
@@ -128,7 +150,9 @@ struct HomeDashboard: View {
                 if !history.isEmpty {
                     RecentMatchesCard(history: history)
                 }
-                WatchStatusCard(status: watchStatus)
+                if watchStatus != .notPaired {
+                    WatchStatusCard(status: watchStatus)
+                }
             }
             .padding(.horizontal)
             .padding(.vertical, 8)
@@ -156,43 +180,88 @@ struct NewMatchButton: View {
 
 // MARK: - Cards
 
-/// The live match: both players' games, the current game score and elapsed time. Tapping it resumes the match.
+/// The active match: both players' games, the current game score and elapsed time. Tapping it opens the match.
 struct ActiveMatchCard: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let match: ActiveMatchSummary
     let onResume: () -> Void
 
     var body: some View {
+        // At accessibility text sizes the elapsed time goes under the badge instead of squeezing beside it
+        let headerLayout =
+            dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+            : AnyLayout(HStackLayout(alignment: .firstTextBaseline))
         Button(action: onResume) {
             VStack(spacing: 12) {
                 HStack(alignment: .firstTextBaseline) {
-                    Label("Live", systemImage: "record.circle")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.red)
-                        .symbolEffect(.pulse, options: .repeating)
-                    Spacer()
-                    if let start = match.startedAt {
-                        Text(timerInterval: start...Date.distantFuture, countsDown: false)
+                    headerLayout {
+                        ActiveMatchBadge(isLive: match.isLive)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        if let start = match.startedAt {
+                            // The timer icon tells the elapsed time apart from a clock time
+                            Label {
+                                Text(timerInterval: start...Date.distantFuture, countsDown: false)
+                                    .monospacedDigit()
+                            } icon: {
+                                Image(systemName: "timer")
+                            }
                             .font(.subheadline)
-                            .monospacedDigit()
                             .foregroundStyle(.secondary)
+                            .accessibilityLabel(Text("Elapsed"))
+                            .accessibilityValue(Text(timerInterval: start...Date.distantFuture, countsDown: false))
+                        }
                     }
                     DisclosureChevron()
                 }
                 VersusScoreboard(
                     playerOneName: match.playerOneName, playerOneValue: match.playerOneGames,
                     playerTwoName: match.playerTwoName, playerTwoValue: match.playerTwoGames, unit: .games)
-                Text("Game \(match.gameNumber): \(match.playerOneScore)–\(match.playerTwoScore)")
-                    .font(.subheadline.weight(.medium))
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-                    .accessibilityLabel(
-                        Text("Game \(match.gameNumber), \(match.playerOneScore) to \(match.playerTwoScore)"))
+                ActiveMatchFooter(match: match)
             }
             .dashboardCard()
             .contentShape(.rect(cornerRadius: DashboardCard.cornerRadius))
         }
         .buttonStyle(.plain)
-        .accessibilityHint(Text("Resumes the match"))
+        .accessibilityHint(Text(match.isLive ? "Resumes the match" : "Opens the match so it can be ended again"))
+    }
+}
+
+/// "Live" while recording; "Not Saved" after a failed save, when the match is still open.
+struct ActiveMatchBadge: View {
+    let isLive: Bool
+
+    var body: some View {
+        if isLive {
+            Label("Live", systemImage: "record.circle")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.red)
+                .symbolEffect(.pulse, options: .repeating)
+        } else {
+            Label("Not Saved", systemImage: "exclamationmark.triangle.fill")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.orange)
+        }
+    }
+}
+
+/// The current game's score, or that the match is already decided and waiting to be ended.
+struct ActiveMatchFooter: View {
+    let match: ActiveMatchSummary
+
+    var body: some View {
+        VStack {
+            if match.isDecided {
+                Text("Match decided, tap to end it")
+            } else {
+                Text("Game \(match.gameNumber): \(match.playerOneScore)–\(match.playerTwoScore)")
+                    .monospacedDigit()
+                    .accessibilityLabel(
+                        Text("Game \(match.gameNumber), \(match.playerOneScore) to \(match.playerTwoScore)"))
+            }
+        }
+        .font(.subheadline.weight(.medium))
+        .foregroundStyle(.secondary)
     }
 }
 
@@ -205,10 +274,11 @@ struct HeadToHeadCard: View {
             Text("Head to Head")
                 .font(.headline)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityAddTraits(.isHeader)
             VersusScoreboard(
                 playerOneName: record.playerOneName, playerOneValue: record.playerOneWins,
                 playerTwoName: record.playerTwoName, playerTwoValue: record.playerTwoWins, unit: .wins)
-            HeadToHeadCaption(matches: record.matchesPlayed, draws: record.draws)
+            HeadToHeadCaption(matches: record.matchesPlayed, undecided: record.draws)
         }
         .dashboardCard()
     }
@@ -216,12 +286,13 @@ struct HeadToHeadCard: View {
 
 struct HeadToHeadCaption: View {
     let matches: Int
-    let draws: Int
+    let undecided: Int
 
     var body: some View {
         VStack {
-            if draws > 0 {
-                Text("^[\(matches) match](inflect: true) played · ^[\(draws) draw](inflect: true)")
+            if undecided > 0 {
+                // Non-breaking spaces keep the separator off the start of a wrapped line
+                Text("^[\(matches) match](inflect: true) played\u{00A0}·\u{00A0}\(undecided) undecided")
             } else {
                 Text("^[\(matches) match](inflect: true) played")
             }
@@ -235,8 +306,12 @@ struct HeadToHeadCaption: View {
 /// The three most recent finished matches, newest first, with a link to the full history.
 struct RecentMatchesCard: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.scenePhase) private var scenePhase
     /// The whole history, oldest first: rows open `MatchDetailView` with it, as `MatchHistoryView` does.
     let history: [MatchResult]
+    /// "Today" for the rows' dates; refreshed when the screen appears, comes back to the foreground or changes
+    /// content, so a row saved last night does not keep reading as today.
+    @State private var now = Date.now
 
     var body: some View {
         // At accessibility text sizes the link sits under the title instead of fighting it for the width
@@ -249,6 +324,7 @@ struct RecentMatchesCard: View {
                 Text("Recent")
                     .font(.headline)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityAddTraits(.isHeader)
                 NavigationLink("All Matches") {
                     MatchHistoryView()
                 }
@@ -265,13 +341,19 @@ struct RecentMatchesCard: View {
                             playerOneName: match.playerOneName ?? String(localized: "Player 1"),
                             playerTwoName: match.playerTwoName ?? String(localized: "Player 2"),
                             playerOneGames: match.playerOneGames, playerTwoGames: match.playerTwoGames,
-                            winner: match.winner, date: match.timestamp, highlightCount: match.highlightCount)
+                            winner: match.winner, date: match.timestamp, highlightCount: match.highlightCount,
+                            now: now)
                     }
                     .buttonStyle(.plain)
                 }
             }
         }
         .dashboardCard(bottomPadding: 4)  // the last row's own padding completes the inset
+        .onAppear { now = .now }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { now = .now }
+        }
+        .onChange(of: history.count) { now = .now }
     }
 }
 
@@ -290,7 +372,10 @@ struct WatchStatusCard: View {
             .dashboardCard()
             if status == .notInstalled {
                 Text(
-                    "Install Score on your Apple Watch to score points, mark highlights and end games from your wrist."
+                    """
+                    Install the watch app from the Watch app on your iPhone to score points, mark highlights and \
+                    end games from your wrist.
+                    """
                 )
                 .font(.footnote)
                 .foregroundStyle(.secondary)
@@ -305,6 +390,7 @@ struct WatchStatusCard: View {
 /// One finished match: players (winner in bold), date and highlights, and the games coloured by the winner.
 struct RecentMatchRow: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.calendar) private var calendar
     let playerOneName: String
     let playerTwoName: String
     let playerOneGames: Int
@@ -312,10 +398,11 @@ struct RecentMatchRow: View {
     let winner: Int
     let date: Date
     let highlightCount: Int
+    let now: Date
 
     /// The date as Mail and Messages show it (see `RecentDateStyle`); shared by the visible and spoken text.
     private var dateText: Text {
-        switch RecentDateStyle(date: date, now: .now, calendar: .current) {
+        switch RecentDateStyle(date: date, now: now, calendar: calendar) {
         case .time: Text(date, format: .dateTime.hour().minute())
         case .yesterday: Text("Yesterday")
         case .weekday: Text(date, format: .dateTime.weekday(.wide))
@@ -330,6 +417,21 @@ struct RecentMatchRow: View {
         case 2: .red
         default: .secondary
         }
+    }
+
+    /// One spoken summary with the games in the same order as the sentence, e.g. "Lucio beat Alex 3 to 1".
+    private var spokenResult: Text {
+        switch winner {
+        case 1: Text("\(playerOneName) beat \(playerTwoName) \(playerOneGames) to \(playerTwoGames)")
+        case 2: Text("\(playerTwoName) beat \(playerOneName) \(playerTwoGames) to \(playerOneGames)")
+        default: Text("\(playerOneName) and \(playerTwoName), no winner, \(playerOneGames) to \(playerTwoGames)")
+        }
+    }
+
+    private var spokenSummary: Text {
+        highlightCount > 0
+            ? Text("\(spokenResult), \(dateText), ^[\(highlightCount) highlight](inflect: true)")
+            : Text("\(spokenResult), \(dateText)")
     }
 
     var body: some View {
@@ -348,7 +450,6 @@ struct RecentMatchRow: View {
                             Text(
                                 "\(dateText)\u{00A0}·\u{00A0}\(Text(Image(systemName: "star.fill")).foregroundStyle(.yellow))\u{00A0}\(highlightCount)"
                             )
-                            .accessibilityLabel(Text("\(dateText), ^[\(highlightCount) highlight](inflect: true)"))
                         } else {
                             dateText
                         }
@@ -362,45 +463,39 @@ struct RecentMatchRow: View {
                     .fontDesign(.rounded)
                     .monospacedDigit()
                     .foregroundStyle(winnerColor)
-                    .accessibilityLabel(Text("\(playerOneGames) to \(playerTwoGames)"))
             }
             DisclosureChevron()
         }
         .padding(.vertical, 12)
         .contentShape(.rect)
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(spokenSummary)
     }
 }
 
-/// "Alex vs Lucio" with the winner in bold (and spoken as the winner).
+/// "Alex vs Lucio" with the winner in bold.
 struct MatchPlayersText: View {
     let playerOneName: String
     let playerTwoName: String
     let winner: Int
 
     var body: some View {
-        VStack(alignment: .leading) {
-            switch winner {
-            case 1:
-                Text("**\(playerOneName)** vs \(playerTwoName)")
-                    .accessibilityLabel(Text("\(playerOneName) beat \(playerTwoName)"))
-            case 2:
-                Text("\(playerOneName) vs **\(playerTwoName)**")
-                    .accessibilityLabel(Text("\(playerTwoName) beat \(playerOneName)"))
-            default:
-                Text("\(playerOneName) vs \(playerTwoName)")
-                    .accessibilityLabel(Text("\(playerOneName) vs \(playerTwoName), no winner"))
-            }
+        switch winner {
+        case 1: Text("**\(playerOneName)** vs \(playerTwoName)")
+        case 2: Text("\(playerOneName) vs **\(playerTwoName)**")
+        default: Text("\(playerOneName) vs \(playerTwoName)")
         }
     }
 }
 
-/// Two players side by side with a large number each: player one leading in blue, player two trailing in red.
+/// Two players with a large number each: side by side (player one leading in blue, player two trailing in red),
+/// or one line per player at accessibility text sizes so long names never break mid-word.
 struct VersusScoreboard: View {
     enum Unit {
         case games, wins
     }
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let playerOneName: String
     let playerOneValue: Int
     let playerTwoName: String
@@ -408,20 +503,28 @@ struct VersusScoreboard: View {
     let unit: Unit
 
     var body: some View {
-        // Aligned on the numbers, so they stay level when one name wraps and "vs" sits between them
-        HStack(alignment: .scoreNumber, spacing: 8) {
-            ScoreColumn(name: playerOneName, value: playerOneValue, tint: .blue, unit: unit)
-            Text("vs")
-                .font(.subheadline)
-                .foregroundStyle(.tertiary)
-                .accessibilityHidden(true)
-            ScoreColumn(name: playerTwoName, value: playerTwoValue, tint: .red, unit: unit)
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(spacing: 8) {
+                ScoreLine(name: playerOneName, value: playerOneValue, tint: .blue, unit: unit)
+                ScoreLine(name: playerTwoName, value: playerTwoValue, tint: .red, unit: unit)
+            }
+        } else {
+            // Aligned on the numbers, so they stay level when one name wraps and "vs" sits between them
+            HStack(alignment: .scoreNumber, spacing: 8) {
+                ScoreColumn(name: playerOneName, value: playerOneValue, tint: .blue, unit: unit)
+                Text("vs")
+                    .font(.subheadline)
+                    .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
+                ScoreColumn(name: playerTwoName, value: playerTwoValue, tint: .red, unit: unit)
+            }
         }
     }
 }
 
 extension VerticalAlignment {
-    private enum ScoreNumber: AlignmentID {
+    // nonisolated: a pure layout helper the layout engine may call off the main actor
+    nonisolated private enum ScoreNumber: AlignmentID {
         static func defaultValue(in context: ViewDimensions) -> CGFloat {
             context[VerticalAlignment.center]
         }
@@ -447,22 +550,49 @@ struct ScoreColumn: View {
                 .font(.system(.largeTitle, design: .rounded, weight: .bold))
                 .monospacedDigit()
                 .foregroundStyle(tint)
-                .contentTransition(.numericText(value: Double(value)))
                 .alignmentGuide(.scoreNumber) { $0[VerticalAlignment.center] }
         }
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(
-            unit == .games
-                ? Text("\(name), ^[\(value) game](inflect: true)")
-                : Text("\(name), ^[\(value) win](inflect: true)"))
+        .accessibilityLabel(ScoreSpeech.label(name: name, value: value, unit: unit))
+    }
+}
+
+/// Name leading, number trailing: the accessibility-size form of `ScoreColumn`.
+struct ScoreLine: View {
+    let name: String
+    let value: Int
+    let tint: Color
+    let unit: VersusScoreboard.Unit
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(name)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 12)
+            Text(value, format: .number)
+                .font(.system(.largeTitle, design: .rounded, weight: .bold))
+                .monospacedDigit()
+                .foregroundStyle(tint)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(ScoreSpeech.label(name: name, value: value, unit: unit))
+    }
+}
+
+enum ScoreSpeech {
+    static func label(name: String, value: Int, unit: VersusScoreboard.Unit) -> Text {
+        unit == .games
+            ? Text("\(name), ^[\(value) game](inflect: true)")
+            : Text("\(name), ^[\(value) win](inflect: true)")
     }
 }
 
 /// Trailing chevron that marks a card row as tappable, like a List disclosure indicator.
 struct DisclosureChevron: View {
     var body: some View {
-        Image(systemName: "chevron.right")
+        Image(systemName: "chevron.forward")  // flips in right-to-left layouts
             .font(.footnote.weight(.semibold))
             .foregroundStyle(.tertiary)
             .accessibilityHidden(true)

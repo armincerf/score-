@@ -56,7 +56,8 @@ nonisolated struct UnsafeSendable<T>: @unchecked Sendable {
 class WatchConnectivityManager: NSObject {
     var scoreState = ScoreState()
     var isWatchReachable = false
-    var isWatchAppInstalled = false
+    var isWatchPaired = false
+    var isWatchAppInstalled = false  // paired and installed
 
     // Video recording
     var isRecording = false
