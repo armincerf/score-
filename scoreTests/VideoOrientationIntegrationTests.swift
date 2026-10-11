@@ -161,9 +161,11 @@ struct VideoOrientationIntegrationTests {
             file: "detector-3s.txt")
     }
 
-    @Test("Detection time on a 60 s 720p mock video is measured and logged", .timeLimit(.minutes(3)))
-    func measureSixtySecondDetection() async throws {
-        let source = try await Self.mockVideo(seconds: 60, name: "detector-60s.mov")
+    // 20 s, not 60: the detector samples five frames whatever the length, while drawing 1800 mock frames timed the
+    // test out (3 minutes) whenever the Mac was busy with another build
+    @Test("Detection time on a 20 s 720p mock video is measured and logged", .timeLimit(.minutes(3)))
+    func measureTwentySecondDetection() async throws {
+        let source = try await Self.mockVideo(seconds: 20, name: "detector-20s.mov")
         let clock = ContinuousClock()
         let start = clock.now
         let detection = await VideoOrientationDetector.correction(for: source)
@@ -171,9 +173,9 @@ struct VideoOrientationIntegrationTests {
         #expect(detection.correction == .none)
         #expect(elapsed < 10, "detection took \(elapsed) s")
         try OrientationFrames.note(
-            "detector 60 s mock: \(detection.correction.rawValue) in \(String(format: "%.3f", elapsed)) s, "
+            "detector 20 s mock: \(detection.correction.rawValue) in \(String(format: "%.3f", elapsed)) s, "
                 + "scores \(detection.scores.isEmpty ? "unavailable (Vision error)" : VideoOrientationDetector.describe(detection.scores))",
-            file: "detector-60s.txt")
+            file: "detector-20s.txt")
     }
 
     /// Exports the mock `source` with one forced correction and returns the frame at 1.5 s of source and export.
