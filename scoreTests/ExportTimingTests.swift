@@ -5,7 +5,7 @@
 //  How long the full-video export of a 60 s 720p mock recording takes on this runtime, written to
 //  REEL_FRAMES_DIR/export-timing.txt: through AVFoundation's default compositor (a layer instruction, as the
 //  export did before FrameCompositor), through FrameCompositor without a board and with a match's board. The three
-//  run in turn, twice, so a busy machine slows them alike. A measurement, not a gate: the limit only catches a hang.
+//  run in turn, three times, so a busy machine slows them alike. A measurement, not a gate: the limit only catches a hang.
 //
 
 import AVFoundation
@@ -44,7 +44,7 @@ struct ExportTimingTests {
             lines.append(line)
             try (lines.joined(separator: "\n") + "\n").write(to: report, atomically: true, encoding: .utf8)
         }
-        for round in 1...2 {
+        for round in 1...3 {
             let reference = try await Self.timed { try await Self.exportWithDefaultCompositor(source, to: output) }
             try note("round \(round): default compositor \(reference) s")
             let plain = try await Self.timed {
