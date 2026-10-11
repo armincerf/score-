@@ -17,12 +17,16 @@ struct PlayerStatsView: View {
     var body: some View {
         List {
             PlayerSummarySection(player: player)
-            Section("Opponents") {
+            Section {
                 ForEach(opponents) { opponent in
                     NavigationLink(value: StatsRoute.headToHead(player.id, opponent.id)) {
-                        OpponentRow(opponent: opponent)
+                        OpponentRow(playerName: player.name, opponent: opponent)
                     }
                 }
+            } header: {
+                Text("Record by Opponent")
+            } footer: {
+                Text("\(player.name)’s wins, losses and win rate against each opponent.")
             }
             Section("Matches") {
                 ForEach(matches) { match in
@@ -163,14 +167,16 @@ struct LeaderboardRow: View {
     }
 }
 
-/// An opponent's name with the player's record and win rate against them.
+/// "vs <opponent>" with the player's record and win rate against them: the numbers are the page player's, so the
+/// row names the opponent the way `PlayerMatchRow` does, not as the leaderboard names a player by their own figures.
 private struct OpponentRow: View {
+    let playerName: String
     let opponent: OpponentRecord
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(opponent.name)
+                Text("vs \(opponent.name)")
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
                 RecordText(wins: opponent.wins, losses: opponent.losses, draws: opponent.draws)
@@ -182,7 +188,9 @@ private struct OpponentRow: View {
                 .font(.body.weight(.semibold))
                 .monospacedDigit()
                 .accessibilityLabel(
-                    Text("Win rate \(opponent.winRate, format: .percent.precision(.fractionLength(0)))"))
+                    Text(
+                        "\(playerName)’s win rate \(opponent.winRate, format: .percent.precision(.fractionLength(0)))",
+                        comment: "Player's win rate against the opponent named in the same row"))
         }
         .accessibilityElement(children: .combine)
     }
