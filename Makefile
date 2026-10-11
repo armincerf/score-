@@ -91,7 +91,7 @@ testflight-export: ## Archive + export an App Store .ipa without uploading (chec
 testflight-status: ## App Store Connect app record, latest builds and beta groups
 	@python3 scripts/asc.py status
 
-testers: ## Ensure the external "Score testers" group has its testers; list their state
+testers: ## Ensure the internal all-builds "Score testers" group has its testers; list them
 	@python3 scripts/asc.py ensure-testers
 
 sim-reset: ## Erase the test simulator (fixes "Failed to install or launch the test runner")

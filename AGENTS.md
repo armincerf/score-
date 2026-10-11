@@ -217,61 +217,66 @@ session, local distribution certificate or app-specific password is involved.
 
 **Prerequisites**
 
-- **App Store Connect app record** for `armincerf.score` (one-time, manual: the public API
-  cannot create apps). appstoreconnect.apple.com > Apps > + > New App: iOS, name e.g.
-  "Score", bundle id `armincerf.score`, SKU e.g. `score`. The bundle id is registered (cloud
-  signing did it); if it is ever missing from the list, `make testflight-export` registers it.
-  `make testflight` stops before archiving while the record is missing.
+- **App Store Connect app record**: exists. "Score: Table Tennis", app id `6821574624`, bundle
+  id `armincerf.score`, SKU `armincerf.score`, primary language en-GB (the public API cannot
+  create app records; this one was made in the web UI). `make testflight` stops before
+  archiving if it ever goes missing. The bundle ids `armincerf.score` and
+  `armincerf.score.watchkitapp` are registered; cloud signing re-registers them if needed.
 - **API key** `~/.appstoreconnect/private_keys/AuthKey_8QS8WXLS34.p8`. It never goes in the
   repo (`*.p8` is gitignored). Defaults: `ASC_KEY_ID=8QS8WXLS34`,
   `ASC_ISSUER_ID=69a6de79-5ccb-47e3-e053-5b8c7c11a4d1`, `ASC_KEY_PATH` as above; override by env.
-- **App icons**: the upload is refused while the iOS or watch `AppIcon` set has no artwork
+- **App icons**: the upload is refused while the iOS or watch `AppIcon` has no artwork
   (App Store Connect rejects such builds); `--no-upload` only warns.
-- **Beta review contact phone**: the first `distribute` needs `ASC_REVIEW_PHONE` (App Store
-  Connect keeps it afterwards). `ASC_REVIEW_FIRST_NAME`/`LAST_NAME`/`EMAIL` default to
-  Alex / Davis / alexanderdavis95@gmail.com; `ASC_FEEDBACK_EMAIL` defaults to the review email.
 - `python3` with `cryptography` (Homebrew's has it; `/usr/bin/python3` does not).
 
 **Steps**
 
 ```
-make testflight-export                    # optional: archive + export an .ipa, no upload
-make testers                              # "Score testers" group + testers (idempotent)
-ASC_REVIEW_PHONE='+44 ...' make testflight [VERSION=1.1.0] [NOTES="What to test"]
+make testflight [VERSION=1.1.0] [NOTES="What to test"]   # archive, upload, wait, distribute
 make testflight-status                    # app record, latest builds + states, groups
-python3 scripts/asc.py testers            # group members and invite state
+make testers                              # "Score testers" group + testers (idempotent)
+make testflight-export                    # optional: archive + export an .ipa, no upload
+python3 scripts/asc.py testers            # group members and their state
 ```
 
-`make testflight` = `asc.py preflight` (app record + review phone, read-only) +
-`scripts/testflight.sh` (archive with `-allowProvisioningUpdates`, check the archive, export
-with `destination` upload) + `asc.py wait-build <n>` (polls until `VALID`, 30 min timeout) +
-`asc.py distribute <n>`. If the wait times out, re-run those two
+`make testflight` = `asc.py preflight` (app record, and the review phone only for an external
+group; read-only) + `scripts/testflight.sh` (archive with `-allowProvisioningUpdates`, check
+the archive, export with `destination` upload) + `asc.py wait-build <n>` (polls until
+`VALID`, 30 min timeout) + `asc.py distribute <n>`. If the wait times out, re-run those two
 `asc.py` commands with the printed build number; every step is idempotent.
+
+**Testers**: "Score testers" is an *internal* group with access to all builds (Alex Davis,
+alexanderdavis95@gmail.com, and Lucio D'Alessandro, lucio.dalessa@gmail.com, both team
+members). Every processed build reaches them at once, with no beta review; TestFlight emails
+them and the build appears in the TestFlight app (the watch app installs from the iPhone's
+Watch app, or automatically). To add an internal tester, put the email in `TESTERS` in
+`scripts/asc.py` and run `make testers`: the person must be a team member (App Store Connect >
+Users and Access) and `ensure-testers` adds this app to their visible apps when their role
+limits them to specific apps (that was the 409 "Tester(s) cannot be assigned" case). Builds
+expire after 90 days.
 
 **Automatic**: build number (UTC `YYYYMMDD.HHMMSS`, both apps), marketing version (the
 project's `MARKETING_VERSION` unless `VERSION=`), bundle id registration, the cloud-managed
 distribution certificate and App Store profiles, symbol upload, archive checks (one app,
 embedded watch app, bundle ids, versions, icons), processing wait, What to Test text, test
-information (beta description, feedback email, review contact and notes; written in the app
-record's primary language, e.g. en-GB), export compliance
-(`ITSAppUsesNonExemptEncryption = NO` in both Info.plists; `distribute` sets
-`usesNonExemptEncryption=false` only if the API reports it unset, then waits up to 10 min for
-the build's external testing state to leave `PROCESSING`/`MISSING_EXPORT_COMPLIANCE`), adding
-the build to "Score testers", submitting it for beta review, and tester invites (Apple emails
-them). A rejected beta review makes `distribute` exit non-zero with a pointer to App Store
-Connect.
+information (beta description and feedback email, written in the app record's primary
+language, en-GB), export compliance (`ITSAppUsesNonExemptEncryption = NO` in both
+Info.plists; `distribute` sets `usesNonExemptEncryption=false` only if the API reports it
+unset, then waits up to 10 min for the build's internal testing state to leave
+`PROCESSING`/`MISSING_EXPORT_COMPLIANCE`), and auto-notify. `distribute` exits non-zero if
+the build does not end up `READY_FOR_BETA_TESTING`/`IN_BETA_TESTING`.
 
-**Manual**: creating the app record, icon artwork, the review phone number once, answering a
-beta review rejection, and anything for the App Store itself (screenshots, privacy, release).
+**Manual**: icon artwork, adding people to the team, and anything for the App Store itself
+(screenshots, privacy, release).
 
-**External beta review**: "Score testers" is an *external* group, so testers are invited by
-email and need no App Store Connect account on the team (internal groups do); in exchange,
-Apple reviews a build before the group can install it.
-The first build of each marketing version gets a full review (usually within a day); later
-builds of the same version are usually approved much faster, but each still needs the
-submission that `distribute` creates. Testers get an email invite once a build in the group
-is approved, accept it in the TestFlight app on the iPhone, and the watch app installs from
-the iPhone's Watch app (or automatically). Builds expire after 90 days.
+**External testers (not used)**: `ASC_EXTERNAL_GROUP=1 make testers` creates an *external*
+"Score testers" group instead (only if none exists yet), for people outside the team: they
+are invited by email, Apple reviews the first build of each version before they can install
+it (later builds are usually quick), and `distribute` then also needs the beta review contact
+(`ASC_REVIEW_PHONE` once; `ASC_REVIEW_FIRST_NAME`/`LAST_NAME`/`EMAIL` default to Alex / Davis /
+alexanderdavis95@gmail.com; `ASC_FEEDBACK_EMAIL` defaults to the review email), adds the build
+to the group and submits it for beta review. A rejected review makes `distribute` exit
+non-zero with a pointer to App Store Connect.
 
 Notes: `testflight.sh` runs xcodebuild with `/usr/bin` first on `PATH` (Homebrew's rsync breaks
 `exportArchive`) and its own DerivedData in `.build/archive/`; logs are

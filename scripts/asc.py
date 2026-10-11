@@ -60,6 +60,11 @@ BUNDLE_ID = os.environ.get("ASC_BUNDLE_ID") or "armincerf.score"
 FALLBACK_LOCALE = "en-US"
 
 GROUP_NAME = "Score testers"
+# Both testers are App Store Connect team members (the account holder and a developer), so the
+# group is *internal* with access to all builds: every processed build reaches them at once
+# and no beta review is involved. ASC_EXTERNAL_GROUP=1 creates an external (email invite,
+# beta-reviewed) group instead; an existing external group named GROUP_NAME is used as is.
+EXTERNAL_GROUP = os.environ.get("ASC_EXTERNAL_GROUP", "") not in ("", "0")
 # (email, first name, last name); names are optional for the API.
 TESTERS = [
     ("alexanderdavis95@gmail.com", "Alex", "Davis"),
@@ -95,10 +100,12 @@ POLL_SECONDS = 30
 FAILED_PROCESSING_STATES = {"FAILED", "INVALID"}
 # Spelled out: wait-build must see PROCESSING, FAILED and INVALID builds, not only VALID ones.
 ALL_PROCESSING_STATES = "PROCESSING,FAILED,INVALID,VALID"
-# External states a freshly VALID build passes through before it can join an external group
-# and be submitted (buildBetaDetail lags the build's processingState by a little).
-EXTERNAL_SETTLING_STATES = {"PROCESSING", "MISSING_EXPORT_COMPLIANCE"}
-EXTERNAL_SETTLE_TIMEOUT = 10 * 60
+# Beta states a freshly VALID build passes through before it can join an external group, be
+# submitted, or reach internal testers (buildBetaDetail lags processingState by a little).
+SETTLING_BETA_STATES = {"PROCESSING", "MISSING_EXPORT_COMPLIANCE"}
+BETA_SETTLE_TIMEOUT = 10 * 60
+# Internal states in which internal testers can install the build.
+TESTABLE_INTERNAL_STATES = {"READY_FOR_BETA_TESTING", "IN_BETA_TESTING"}
 # External states in which the build needs no (new) beta review submission.
 REVIEWED_EXTERNAL_STATES = {
     "BETA_APPROVED",
@@ -283,6 +290,16 @@ def find_group(api: Client, app_id: str) -> dict[str, Any] | None:
     return next((g for g in groups if g["attributes"].get("name") == GROUP_NAME), None)
 
 
+def is_internal(group: dict[str, Any]) -> bool:
+    return bool(group["attributes"].get("isInternalGroup"))
+
+
+def group_kind(group: dict[str, Any]) -> str:
+    if not is_internal(group):
+        return "external"
+    return "internal, all builds" if group["attributes"].get("hasAccessToAllBuilds") else "internal"
+
+
 def find_build(api: Client, app_id: str, build_number: str) -> dict[str, Any] | None:
     found = api.get(
         "/v1/builds",
@@ -389,21 +406,35 @@ def cmd_status(api: Client, args: argparse.Namespace) -> int:
 def ensure_group(api: Client, app_id: str) -> dict[str, Any]:
     group = find_group(api, app_id)
     if group is None:
+        attrs: dict[str, Any] = {"name": GROUP_NAME}
+        if not EXTERNAL_GROUP:
+            attrs.update({"isInternalGroup": True, "hasAccessToAllBuilds": True})
         group = api.post(
             "/v1/betaGroups",
             {
                 "data": {
                     "type": "betaGroups",
-                    "attributes": {"name": GROUP_NAME},
+                    "attributes": attrs,
                     "relationships": {"app": {"data": {"type": "apps", "id": app_id}}},
                 }
             },
         )["data"]
-        print(f"Created external beta group {GROUP_NAME!r}")
+        print(f"Created beta group {GROUP_NAME!r} ({group_kind(group)})")
     else:
-        print(f"Beta group {GROUP_NAME!r} exists")
-    if group["attributes"].get("isInternalGroup"):
-        fail(f"{GROUP_NAME!r} is an internal group; external testers need an external group")
+        print(f"Beta group {GROUP_NAME!r} exists ({group_kind(group)})")
+    if is_internal(group) and not group["attributes"].get("hasAccessToAllBuilds"):
+        api.patch(
+            f"/v1/betaGroups/{group['id']}",
+            {
+                "data": {
+                    "type": "betaGroups",
+                    "id": group["id"],
+                    "attributes": {"hasAccessToAllBuilds": True},
+                }
+            },
+        )
+        group["attributes"]["hasAccessToAllBuilds"] = True
+        print("  Group now has access to all builds")
     return group
 
 
@@ -429,44 +460,108 @@ def ensure_testers(api: Client, app_id: str) -> dict[str, Any]:
             ),
             None,
         )
-        if match is not None:
-            api.post(
-                f"/v1/betaGroups/{group['id']}/relationships/betaTesters",
-                {"data": [{"type": "betaTesters", "id": match["id"]}]},
-            )
-            print(f"  {email}: added (existing tester)")
-        else:
-            attrs = {"email": email}
-            if first:
-                attrs["firstName"] = first
-            if last:
-                attrs["lastName"] = last
-            api.post(
-                "/v1/betaTesters",
-                {
-                    "data": {
-                        "type": "betaTesters",
-                        "attributes": attrs,
-                        "relationships": {
-                            "betaGroups": {"data": [{"type": "betaGroups", "id": group["id"]}]}
-                        },
-                    }
-                },
-            )
-            print(f"  {email}: added (new tester)")
+        try:
+            _add_tester(api, group, match, email, first, last)
+        except AscError as err:
+            # A team member can only test an app they can see; a 409 "cannot be assigned"
+            # for an internal group usually means the app is not in their visible apps.
+            if not is_internal(group) or not _grant_app_visibility(api, app_id, email):
+                raise
+            try:
+                _add_tester(api, group, match, email, first, last)
+            except AscError as retry_err:
+                fail(_internal_tester_message(email, retry_err))
     return group
+
+
+def _add_tester(
+    api: Client,
+    group: dict[str, Any],
+    existing: dict[str, Any] | None,
+    email: str,
+    first: str,
+    last: str,
+) -> None:
+    if existing is not None:
+        api.post(
+            f"/v1/betaGroups/{group['id']}/relationships/betaTesters",
+            {"data": [{"type": "betaTesters", "id": existing["id"]}]},
+        )
+        print(f"  {email}: added (existing tester)")
+        return
+    attrs = {"email": email}
+    if first:
+        attrs["firstName"] = first
+    if last:
+        attrs["lastName"] = last
+    api.post(
+        "/v1/betaTesters",
+        {
+            "data": {
+                "type": "betaTesters",
+                "attributes": attrs,
+                "relationships": {
+                    "betaGroups": {"data": [{"type": "betaGroups", "id": group["id"]}]}
+                },
+            }
+        },
+    )
+    print(f"  {email}: added (new tester)")
+
+
+def _grant_app_visibility(api: Client, app_id: str, email: str) -> bool:
+    """Make the app visible to the team member with this email (Users and Access > Apps).
+    True if the app was added to their visible apps, False if nothing applied."""
+    users = api.get(
+        "/v1/users",
+        **{"filter[username]": email, "limit": 5, "fields[users]": "username,allAppsVisible"},
+    ).get("data")
+    user = next(
+        (
+            u
+            for u in users or []
+            if (u["attributes"].get("username") or "").lower() == email.lower()
+        ),
+        None,
+    )
+    if user is None or user["attributes"].get("allAppsVisible"):
+        return False
+    visible = api.get_all(f"/v1/users/{user['id']}/visibleApps", limit=200)
+    if any(a["id"] == app_id for a in visible):
+        return False
+    api.post(
+        f"/v1/users/{user['id']}/relationships/visibleApps",
+        {"data": [{"type": "apps", "id": app_id}]},
+    )
+    print(f"  {email}: team member given access to this app (Users and Access)")
+    return True
+
+
+def _internal_tester_message(email: str, err: AscError) -> str:
+    return (
+        f"{email} could not join the internal group {GROUP_NAME!r} ({err}). Internal testers "
+        "must be team members (App Store Connect > Users and Access) who can see this app; "
+        "add them there, or delete the group and re-run with ASC_EXTERNAL_GROUP=1 for an "
+        "email-invited (beta-reviewed) external group."
+    )
 
 
 def cmd_ensure_testers(api: Client, args: argparse.Namespace) -> int:
     app = require_app(api)
     group = ensure_testers(api, app["id"])
-    print(f"Members of {GROUP_NAME!r}:")
+    print(f"Members of {GROUP_NAME!r} ({group_kind(group)}):")
     for tester in group_testers(api, group["id"]):
         print(_tester_line(tester))
-    print(
-        "TestFlight emails the invite once a build in this group has passed beta review "
-        "(`make testflight` adds every new build)."
-    )
+    if is_internal(group):
+        print(
+            "Internal testers get every processed build in the TestFlight app (Apple emails "
+            "them when a build is ready); no beta review."
+        )
+    else:
+        print(
+            "TestFlight emails the invite once a build in this group has passed beta review "
+            "(`make testflight` adds every new build)."
+        )
     return 0
 
 
@@ -477,7 +572,7 @@ def cmd_testers(api: Client, args: argparse.Namespace) -> int:
         print(f"No beta group {GROUP_NAME!r} yet (run `make testers`).")
         return 1
     testers = group_testers(api, group["id"])
-    print(f"{GROUP_NAME} ({len(testers)} testers):")
+    print(f"{GROUP_NAME} ({group_kind(group)}, {len(testers)} testers):")
     for tester in testers:
         print(_tester_line(tester))
     return 0
@@ -486,10 +581,15 @@ def cmd_testers(api: Client, args: argparse.Namespace) -> int:
 def cmd_preflight(api: Client, args: argparse.Namespace) -> int:
     """Read-only check that `distribute` will not stop on missing prerequisites."""
     app = require_app(api)
+    group = find_group(api, app["id"])
+    external = EXTERNAL_GROUP if group is None else not is_internal(group)
+    if not external:
+        print(f"Preflight ok: app record for {BUNDLE_ID}; internal group, no beta review needed")
+        return 0
     detail = api.get(f"/v1/apps/{app['id']}/betaAppReviewDetail")["data"]["attributes"]
     if not (os.environ.get("ASC_REVIEW_PHONE") or detail.get("contactPhone")):
         fail(NO_PHONE)
-    print(f"Preflight ok: app record for {BUNDLE_ID}, beta review contact phone available")
+    print(f"Preflight ok: app record for {BUNDLE_ID}; beta review contact phone available")
     return 0
 
 
@@ -659,29 +759,31 @@ def _ensure_in_group(api: Client, group: dict[str, Any], build: dict[str, Any]) 
     print(f"  Group {GROUP_NAME!r}: build added")
 
 
-def _settled_beta_detail(api: Client, build: dict[str, Any]) -> dict[str, Any]:
-    """The build's buildBetaDetail once its external state has left PROCESSING and
-    MISSING_EXPORT_COMPLIANCE: right after `VALID` it can still be in either, and App Store
-    Connect refuses to add such a build to an external group or submit it for review."""
-    deadline = time.monotonic() + EXTERNAL_SETTLE_TIMEOUT
+def _settled_beta_detail(api: Client, build: dict[str, Any], kind: str) -> dict[str, Any]:
+    """The build's buildBetaDetail once its internal or external state (`kind`) has left
+    PROCESSING and MISSING_EXPORT_COMPLIANCE: right after `VALID` it can still be in either,
+    and then App Store Connect neither shows it to internal testers nor lets it join an
+    external group or be submitted for review."""
+    key = f"{kind}BuildState"
+    deadline = time.monotonic() + BETA_SETTLE_TIMEOUT
     shown = None
     while True:
         detail = api.get(f"/v1/builds/{build['id']}/buildBetaDetail")["data"]
-        external = detail["attributes"].get("externalBuildState")
-        if external not in EXTERNAL_SETTLING_STATES:
+        state = detail["attributes"].get(key)
+        if state not in SETTLING_BETA_STATES:
             return detail
-        if external != shown:
-            print(f"  External testing state: {external}; waiting...", flush=True)
-            shown = external
+        if state != shown:
+            print(f"  {kind.capitalize()} testing state: {state}; waiting...", flush=True)
+            shown = state
         if time.monotonic() >= deadline:
             fail(
-                f"build {build['attributes'].get('version')} is still {external} for external "
-                f"testing after {EXTERNAL_SETTLE_TIMEOUT // 60} min; re-run distribute later"
+                f"build {build['attributes'].get('version')} is still {state} for {kind} "
+                f"testing after {BETA_SETTLE_TIMEOUT // 60} min; re-run distribute later"
             )
         time.sleep(15)
 
 
-def _ensure_beta_review(api: Client, build: dict[str, Any], detail: dict[str, Any]) -> str:
+def _ensure_auto_notify(api: Client, detail: dict[str, Any]) -> None:
     if detail["attributes"].get("autoNotifyEnabled") is False:
         api.patch(
             f"/v1/buildBetaDetails/{detail['id']}",
@@ -694,6 +796,9 @@ def _ensure_beta_review(api: Client, build: dict[str, Any], detail: dict[str, An
             },
         )
         print("  Auto-notify testers: enabled")
+
+
+def _ensure_beta_review(api: Client, build: dict[str, Any], detail: dict[str, Any]) -> str:
     external = detail["attributes"].get("externalBuildState")
     subs = (
         api.get("/v1/betaAppReviewSubmissions", **{"filter[build]": build["id"], "limit": 5}).get(
@@ -727,6 +832,36 @@ def _ensure_beta_review(api: Client, build: dict[str, Any], detail: dict[str, An
     return state
 
 
+def _distribute_internal(
+    api: Client,
+    app: dict[str, Any],
+    build: dict[str, Any],
+    group: dict[str, Any],
+    locale: str,
+    notes: str | None,
+) -> int:
+    """Internal group: no review contact or beta review; the build only has to clear export
+    compliance and processing, and a group with access to all builds already contains it."""
+    feedback = os.environ.get("ASC_REVIEW_EMAIL") or DEFAULT_REVIEW_EMAIL
+    _ensure_beta_app_localization(api, app["id"], locale, feedback)
+    _ensure_whats_new(api, build, locale, notes)
+    _ensure_encryption(api, build)
+    detail = _settled_beta_detail(api, build, "internal")
+    _ensure_auto_notify(api, detail)
+    if group["attributes"].get("hasAccessToAllBuilds"):
+        print(f"  Group {GROUP_NAME!r}: has access to all builds, nothing to add")
+    else:
+        _ensure_in_group(api, group, build)
+    state = detail["attributes"].get("internalBuildState")
+    if state in TESTABLE_INTERNAL_STATES:
+        print(f"Done: internal testers can install this build from TestFlight (state={state}).")
+        return 0
+    fail(
+        f"build {build['attributes'].get('version')} is not available to internal testers: "
+        f"internal testing state is {state} (see App Store Connect > TestFlight)"
+    )
+
+
 def cmd_distribute(api: Client, args: argparse.Namespace) -> int:
     app = require_app(api)
     build = find_build(api, app["id"], args.build)
@@ -739,14 +874,17 @@ def cmd_distribute(api: Client, args: argparse.Namespace) -> int:
             f"run: python3 scripts/asc.py wait-build {args.build}"
         )
     print(f"Distributing {build['_marketing']} ({args.build}) to {GROUP_NAME!r}:")
-    # App-level test information first: a missing review phone stops before anything is written.
     locale = app["attributes"].get("primaryLocale") or FALLBACK_LOCALE
+    group = ensure_testers(api, app["id"])
+    if is_internal(group):
+        return _distribute_internal(api, app, build, group, locale, args.notes)
+    # App-level test information first: a missing review phone stops before anything is written.
     review_email = _ensure_review_detail(api, app["id"])
     _ensure_beta_app_localization(api, app["id"], locale, review_email)
-    group = ensure_testers(api, app["id"])
     _ensure_whats_new(api, build, locale, args.notes)
     _ensure_encryption(api, build)
-    detail = _settled_beta_detail(api, build)
+    detail = _settled_beta_detail(api, build, "external")
+    _ensure_auto_notify(api, detail)
     _ensure_in_group(api, group, build)
     review = _ensure_beta_review(api, build, detail)
     if review in ("APPROVED", "BETA_APPROVED", "IN_BETA_TESTING", "READY_FOR_BETA_TESTING"):
