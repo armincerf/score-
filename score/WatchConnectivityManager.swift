@@ -494,7 +494,10 @@ class WatchConnectivityManager: NSObject {
         }
     }
 
-    private func scorePoint(forPlayer player: Int) {
+    /// Scores a point for `player` at match-clock `offset` (nil: now). A watch command passes the time of its tap
+    /// (`watchCommandOffset`), so a point that waited in the watch's queue is placed when it was played.
+    func scorePoint(forPlayer player: Int, at offset: TimeInterval? = nil) {
+        let videoTimestamp = offset ?? recordingDuration
         guard let matchId = currentMatchId else {
             Log.match.debug("No active match")
             return
@@ -511,7 +514,7 @@ class WatchConnectivityManager: NSObject {
                 matchId: matchId,
                 sequenceNumber: try eventStore.getNextSequenceNumber(matchId: matchId),
                 player: player,
-                videoTimestamp: recordingDuration,
+                videoTimestamp: videoTimestamp,
                 gameNumber: currentGameNumber
             )
             try eventStore.append(event: event)
@@ -521,7 +524,7 @@ class WatchConnectivityManager: NSObject {
             } else {
                 scoreState.playerTwoScore += 1
             }
-            recordPoint(forPlayer: player, wasServing: wasServing)
+            recordPoint(forPlayer: player, wasServing: wasServing, at: videoTimestamp)
 
             scoreState.servingPlayer = ServingLogic.calculateCurrentServer(
                 firstServer: scoreState.currentGameFirstServer ?? 1,
@@ -592,10 +595,8 @@ class WatchConnectivityManager: NSObject {
 
     // MARK: - Point Recording
 
-    private func recordPoint(forPlayer player: Int, wasServing: Bool = false) {
+    private func recordPoint(forPlayer player: Int, wasServing: Bool, at videoTimestamp: TimeInterval) {
         guard scoreState.isRecording else { return }
-
-        let videoTimestamp = recordingDuration
 
         // Add to video timestamps for highlight reel
         pointTimestamps.append(videoTimestamp)
@@ -630,7 +631,8 @@ class WatchConnectivityManager: NSObject {
 
     // MARK: - Highlight Marking
 
-    func markHighlight() {
+    /// Marks a highlight at match-clock `offset` (nil: now; a watch command passes the time of its tap).
+    func markHighlight(at offset: TimeInterval? = nil) {
         Log.match.debug(
             "markHighlight() called - isRecording=\(self.scoreState.isRecording), matchId=\(self.currentMatchId?.uuidString ?? "nil")"
         )
@@ -645,8 +647,8 @@ class WatchConnectivityManager: NSObject {
             return
         }
 
-        // Get the current video timestamp when highlight button is pressed
-        let highlightTimestamp = recordingDuration
+        // The video timestamp when the highlight button was pressed
+        let highlightTimestamp = offset ?? recordingDuration
 
         // Find the timestamp of the last scored point (start of highlight clip)
         let lastPointTimestamp = pointTimestamps.last ?? 0
