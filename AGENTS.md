@@ -118,7 +118,9 @@ docs/screenshots/           Home screen and reel-player renders (make screenshot
   phone applies each `actionId` once across both paths (`receiveFromWatch`, last 200 ids)
   and drops commands whose `sentAt` predates the match's `recordingStartTime` (left in the
   queue from an earlier match); commands without them (older watch builds) are always
-  applied. `updateApplicationContext`
+  applied. A point or highlight from the watch is placed on the match clock at its `sentAt`
+  (`watchCommandOffset`, kept between the previous point and now), not on arrival, so taps
+  that waited in the queue keep their rally's time. `updateApplicationContext`
   is phone -> watch only: the phone pushes the full state on every change (`sendScore()`),
   and `highlightConfirmed` immediately after a highlight.
 - **Every scoring action is an event** appended through `EventStore` (sequence-numbered,
@@ -263,14 +265,16 @@ scripts/screenshot.sh --no-build --wait 20 --args "-seedSampleMatches -seedReel 
   piece's) to fit and centres it (`MediaExportService.fitting`): a mismatch letterboxes, it never crops.
 - **Both exports draw a board.** The full video carries the match board (`MatchScoreboardTimeline`: 0-0 with
   game 1's first server, each point lit for 1.2 s or until the next point, then the next server, deuce included;
-  after a game's last point the lit final score, then the games box, 0-0 and the next first server; untimed
-  points left out, out-of-order times clamped). The reel carries its own (`ReelScoreboardTimeline`).
+  after a game's last point the lit final score, then the games box, 0-0 and the next first server, nobody once
+  the games decide the best of five (the app's state still names one); untimed points left out, out-of-order
+  times clamped). The reel carries its own (`ReelScoreboardTimeline`).
 - **The reel is cut from the raw segments**, not from the full video, so the full video's board never shows in
   it and its footage is encoded once: `MediaExportService.reelPlan` maps each highlight's wall-clock range through
   the timeline into video time and back onto the segment files (`RecordingTimeline.segmentRanges`; a clip across
   a segment boundary is two pieces), each piece with its segment's correction. Segments are deleted after both
   exports, and only when the full video was written. If an export with its board throws, the manager retries it
-  once without the board; if the full export still fails for a one-segment match, the raw segment is kept as the
+  once without the board, unless the failure is one the board cannot cause (`MediaExportService.boardMayHaveCaused`:
+  disk full, interrupted, cancelled), the retry's progress filling the rest of the bar; if the full export still fails for a one-segment match, the raw segment is kept as the
   full video as recorded (no board, no correction); the reel is cut from the segments either way.
 - Vision's body pose request has **no compute device on the iOS simulator** (it throws, the detector keeps
   `.none`). Check detection on the Mac instead: `scripts/detect-orientation.sh <video>...` prints the scores
@@ -281,7 +285,11 @@ scripts/screenshot.sh --no-build --wait 20 --args "-seedSampleMatches -seedReel 
   stored frame through its layer transform (`uprightGeometry` + `fitting`, top-left pixels, flipped into Core
   Image's bottom-left coordinates by `FrameInstruction.coreImageTransform`), then the board for that time. 30 fps,
   Rec. 709, 4:2:0 in and out, no colour management in the CIContext (pixels pass through). Each frame is a pure
-  function of its composition time. The Core Image applier (`AVVideoComposition(applyingFiltersTo:applier:)`,
+  function of its composition time. Where a piece has no video frame (a segment's sound outlasts its picture by
+  tens of ms; pieces are inserted for the file's whole duration, the time base of the board and the reel plan) the
+  frame is black under the board, as the default compositor drew it; failing the request would fail the whole
+  export (`AudioTailExportTests`). A frame waiting for its board is parked (`PendingFrames`) so
+  `cancelAllPendingVideoCompositionRequests` finishes every waiting frame, once, before it returns. The Core Image applier (`AVVideoComposition(applyingFiltersTo:applier:)`,
   async in the iOS 27 SDK) was not used: it has no per-piece geometry, render size or frame duration, which is why
   the board used to be skipped over a source not stored upright. Do not switch to
   `AVVideoCompositionCoreAnimationTool` (export-only, begin-time quirks, custom layers never drawn).
@@ -317,7 +325,9 @@ scripts/screenshot.sh --no-build --wait 20 --args "-seedSampleMatches -seedReel 
   boundary as two pieces; `match-full-*.png`, `match-reel-*.png`), `ScoreboardOverlaySourceTests` (cache bound over
   400 states, misses, prefetch), `MatchScoreboardTimelineTests` (the rules), `ExportTimingTests` (opt-in,
   `TEST_RUNNER_EXPORT_TIMING=1 make test T=scoreTests/ExportTimingTests`: default compositor vs FrameCompositor on a
-  60 s 720p mock, `export-timing.txt`), `scoreTests/ReelOverlayTests` (a 4 s
+  60 s 720p mock, `export-timing.txt`), `AudioTailExportTests` (segments whose sound outlasts the picture: the
+  tail is black, the export succeeds; `tail-*.png`), `MatchScoreboardFlowTests` (no server after a decided match,
+  on the state the manager really builds), `scoreTests/ReelOverlayTests` (a 4 s
   mock with two cues),
   `ReelExportTests` (the real reel: a fabricated two-game match, two clips, frames at 1.0/2.5/4.0/6.5 s;
   plus sound, rotated, corrected and cue-less sources and the 1080p/4K/portrait layouts), `ReelManagerExportTests`

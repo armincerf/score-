@@ -195,6 +195,10 @@ For each clip:
 | Full video, three 4 s segments `[none, clockwise90, none]`, five scripted points: the board on every frame read (gold games box), lit points cells (median > 200) at 1.5/3.0/5.5/9.5 s, settled (< 60) at 2.4/6.5 s, the digit changing (ink), the serve marker moving; the turned segment letterboxed (bands < 4, recall > 0.85 clockwise vs < 0.5) under the board; the third segment untouched | `MatchOverlayExportTests`, `match-full-*.png` | pass |
 | Reel from the same segments, a clip in the turned segment then one across the 8 s boundary: 720x1280 from its first piece, the landscape piece letterboxed (band < 4), the reel's own board on every frame and no gold pixel outside its panel (a second, burned-in board would bring its games boxes); three pieces | `MatchOverlayExportTests`, `match-reel-*.png` | pass |
 | `exportMatchVideos` on a 10 s mock: the full video at `_full.mov` (not the raw segment) with the board, Bob's first serve, Ann's points lit at 1.5 s and 7.5 s, settled at 5 s; the reel with its board | `ReelManagerExportTests`, `manager-full-*.png` | pass |
+| Segments whose sound outlasts the picture by 0.3 s (4 s video, 4.3 s file): the full video over two of them exports at 8.6 s, the tail frame at 4.15 s black under the board, both segments' pictures either side; a reel piece ending on the segment's end exports (both threw `missingSourceFrame` before the fix) | `AudioTailExportTests`, `tail-*.png` | pass |
+| After a 3-0 scored through the manager, the board's last cue has no server; an undecided end keeps the next server; a game played on after the match has its server | `MatchScoreboardFlowTests`, `MatchScoreboardTimelineTests` | pass |
+| Watch taps queued and delivered at 90 s are stored at their `sentAt` (12, 31, 47 s), the highlight from 31 to 45 s; without `sentAt`, on arrival | `WatchCommandTimingTests` | pass |
+| Retry without the board skipped for disk full / interrupted / cancelled; retry progress continues from the bar; a cancel finishes each waiting frame once | `ExportRetryPolicyTests`, `PendingFramesTests` | pass |
 | Lazy boards: at most 16 cached over 400 states (3 frames each), each state rendered once, a miss renders, a prefetched cue needs no render, concurrent misses share one render, a failed state is not retried | `ScoreboardOverlaySourceTests` | pass |
 | Export time, 60 s 720p mock, default compositor vs FrameCompositor (plain / with a match board), run in turn in one process on the iPhone 17 Pro simulator while the Mac's load average was 90-240 | `ExportTimingTests`, `export-timing.txt` | median about 8.9 s vs 10.2 s (1.15x) / 10.3 s (1.2x); single runs ranged 8-32 s. Fresh-process runs before the change (b158d4f) measured 6.2-9.0 s and after it 11.0-12.1 s (up to 1.75x) under similar load |
 | The app: `-seedSampleMatches -seedReel -openLatestMatch`, "Full match": the board over the full video; frames read from the app's `_full.mov` at 3, 9.9 and 19.5 s show 2-1 lit, 5-6 lit and, after game 1 (9-11), games 0-1, 0-0 | simulator screenshots `.build/shots/overlay/` | pass |
@@ -243,7 +247,9 @@ For each clip:
   (`RecordingTimeline.videoTime`, so a point in a gap shows when footage resumes) the new score with the winner's
   row lit for `ReelScoreboardTimeline.celebrationDuration` (cut short by a quicker next point), then the score with
   the next server (`ServingLogic`, deuce included); after a finished game's last point the lit final score (no
-  server), then the games box updated, 0-0 and the next game's first server (nil when there is none); the game in
+  server), then the games box updated, 0-0 and the next game's first server (nil when there is none, and nil once
+  the games decide the best of five unless a later game has points: the app moves the first server on after the
+  deciding game too, so the state always names one); the game in
   progress included; untimed points left out (one warning); a point timed before the previous one is shown at that
   one's time. It reuses `ReelScoreboardTimeline` as the match's data (`game(number:)`, `server(afterPoints:)`).
 - **One compositor**: the full video has to be turned and letterboxed per segment *and* carry the board, in the one
@@ -257,6 +263,15 @@ For each clip:
   = the first piece's upright size, 1/30 s frames, Rec. 709 colour properties, 4:2:0 buffers in and out, a CIContext
   without colour management. iOS 27 deprecates `sourceFrame(byTrackID:)`/`newPixelBuffer()`; it uses
   `sourceReadOnlyPixelBuffer`, `makeMutablePixelBuffer` and `finish(withComposedPixelBuffer:)`.
+- **Frames without a picture**: each segment is inserted for the file's whole duration (the time base the board and
+  `reelPlan` use), and a camera file's sound often runs tens of ms past its last video frame (Photo Booth recordings
+  on a Mac: 13-87 ms), so the compositor is asked for frames the video track does not have; a reel range rounded to
+  1/600 s can end just past the track too. Those frames are drawn black under the board, as the default compositor
+  drew them; failing the request failed the whole export and its retry (found in review, `AudioTailExportTests`).
+- **Cancellation**: a frame waiting for its board is parked in `PendingFrames` (under a Mutex);
+  `cancelAllPendingVideoCompositionRequests` takes every parked frame out and finishes it as cancelled before it
+  returns, as AVVideoCompositing requires, and the board task finishes its frame only if it is still parked, so each
+  request is finished exactly once. It never waits for the main actor (AVFoundation may call it from there).
 - **Lazy boards**: about two states per point (a few hundred per match); at 4K one is 1.6 MB, so they are not
   rendered up front. `ScoreboardOverlaySource` (nonisolated, Sendable) finds the cue by binary search, keeps at most
   16 rendered boards (Mutex-guarded LRU), renders a miss on the main actor (`ReelScoreboardRenderer`, SwiftUI) while
@@ -269,7 +284,12 @@ For each clip:
   raw-segment fallback (full export fails for a one-segment match) keeps the raw file as the full video, plain; the
   reel path is the same either way. Segments are deleted after both exports when the full video was written.
 - **Retry**: an export with its board that throws is retried once without it (full video and reel alike), before
-  the raw-segment fallback.
+  the raw-segment fallback, unless the failure is one the board cannot cause (`boardMayHaveCaused`: disk full,
+  interrupted, cancelled, also as an underlying error), which would only fail again after the same wait. The retry's
+  progress fills what is left of the bar (`retryProgress`), so it never moves back.
+- **Point times**: the full video shows every point at its time, so a watch tap that waited in the
+  `transferUserInfo` queue (watch out of reach) is placed at its `sentAt` on the match clock, kept between the
+  previous point and now, instead of on arrival (which froze the board through those rallies, then jumped).
 - **Performance**: see the Evidence row. On the simulator, in the same process and under the same (heavy) load,
   FrameCompositor took about 1.15-1.2x the default compositor's time for a 60 s 720p export, with or without the
   board; a first export in a fresh process was slower (11-12 s against 6-9 s measured before the change, up to
@@ -278,7 +298,9 @@ For each clip:
 - **Not verified**: a phone (Core Image on the device GPU, HDR or 10-bit camera formats: the compositor asks for
   8-bit 4:2:0, so an HDR recording would be converted to SDR Rec. 709), real footage, a match of hundreds of points
   end to end (the cache bound is unit-tested over 400 states; the longest exported test video is 60 s), and memory
-  during a long export (bounded by design, not measured).
+  during a long export (bounded by design, not measured), how far a phone's capture files' sound runs past their picture (the black tail
+  frames cover any length, but a long tail would show as black at each segment's end), and a cancel arriving while a
+  frame waits for its board (the bookkeeping is unit-tested; no test can make AVFoundation cancel at that moment).
 
 ## Non-goals (for now)
 
