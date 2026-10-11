@@ -25,7 +25,8 @@ struct ReelExportTests {
 
     /// Wall clock = source video time (one segment recorded from 0).
     /// Game 1, player one serves first: ten quick points to 7-3 by 1.0 s, 8-3 at 1.5 s, then 9-3, 10-3, 11-3 at
-    /// 4.6-4.8 s. Game 2 (in progress), player two serves first: 0-1 at 5.0 s, 0-2 at 5.5 s, 1-2 at 6.0 s.
+    /// 4.6-4.8 s. Game 2 (in progress), player two serves first: 0-1 at 5.0 s, 0-2 at 5.5 s, 1-2 at 6.0 s, 1-3 at
+    /// 10.2 s (the rally of clip B, scored after its highlight was marked at 10.0 s).
     private static let match: ReelScoreboardTimeline = {
         func points(_ scored: [(player: Int, at: Double)]) -> [PointEvent] {
             scored.map { PointEvent(player: $0.player, videoTimestamp: $0.at) }
@@ -36,7 +37,7 @@ struct ReelExportTests {
             points: points(quick + [(1, 1.5), (1, 4.6), (1, 4.7), (1, 4.8)]), firstServer: 1)
         return ReelScoreboardTimeline(
             playerOneName: "Alex", playerTwoName: "Lucio", games: [gameOne],
-            currentGamePoints: points([(2, 5.0), (2, 5.5), (1, 6.0)]), currentGameFirstServer: 2)
+            currentGamePoints: points([(2, 5.0), (2, 5.5), (1, 6.0), (2, 10.2)]), currentGameFirstServer: 2)
     }()
 
     /// Clip A: game 1 from 8-3 (1.5 s) for 3 s, player one wins the rally -> reel 0-3 s, row lit from 1.8 s.
@@ -129,12 +130,21 @@ struct ReelExportTests {
         // Clip A's last 1.2 s: Alex's row lit (9-3), Alex to serve
         Self.expectLit(row: 0, in: clipALit, comparedWith: clipAStart)
         #expect(Self.goldMarkerPixels(clipALit, row: 0) > 8 && Self.goldMarkerPixels(clipALit, row: 1) == 0)
+        // Control for the ink checks below: Lucio's 3 stays a 3 while the video behind the panel moves on 1.5 s.
+        // Measured 0 ink pixels (October 2026); the old mean-difference check gave this unchanged cell 4.4, over its
+        // "> 4 means the digit changed" threshold
+        let unchanged = clipALit.inkChanges(to: clipAStart, in: layout.pointsCell(row: 1, in: size))
+        #expect(unchanged < 10, "3 -> 3 changed \(unchanged) ink pixels")
 
         // Clip B at 1-0 in games and 1-2: games digit and both points cells change, nothing lit, Alex to serve
         #expect(clipBStart.meanDifference(to: clipAStart, in: layout.gamesBox(row: 0, in: size)) > 4, "games 0 -> 1")
         #expect(clipBStart.meanDifference(to: clipAStart, in: layout.gamesBox(row: 1, in: size)) < 3, "games 0 -> 0")
-        #expect(clipBStart.meanDifference(to: clipAStart, in: layout.pointsCell(row: 0, in: size)) > 4, "8 -> 1")
-        #expect(clipBStart.meanDifference(to: clipAStart, in: layout.pointsCell(row: 1, in: size)) > 4, "3 -> 2")
+        // The points cells sit on the translucent panel, so a mean difference there also moves with the video; count
+        // the digit's own pixels instead
+        let pointsOne = clipBStart.inkChanges(to: clipAStart, in: layout.pointsCell(row: 0, in: size))
+        #expect(pointsOne > 20, "8 -> 1 changed \(pointsOne) ink pixels")  // measured 123 (the 8 has 148 ink pixels)
+        let pointsTwo = clipBStart.inkChanges(to: clipAStart, in: layout.pointsCell(row: 1, in: size))
+        #expect(pointsTwo > 20, "3 -> 2 changed \(pointsTwo) ink pixels")  // measured 55 (the 3 has 124)
         for row in 0...1 {
             let change =
                 clipBStart.meanBrightness(in: Self.clearArea(row: row))
@@ -222,14 +232,17 @@ struct ReelExportTests {
 struct ReelExportSourceTests {
     private static let directory = ReelFrames.outputDirectory
 
-    /// One 4 s clip from 1 s, player one wins the rally: two cues (score, then the lit row).
+    /// One 4 s clip from 1 s (0-1), player one wins the rally (1-1 at 5.2 s): two cues (score, then the lit row).
     private static func cues(
         for source: URL
     ) async throws -> (clip: MediaExportService.HighlightClipInfo, overlays: [OverlayCue]) {
         let highlight = HighlightClip(startTimestamp: 1, endTimestamp: 5, player: 1, gameNumber: 0)
         let timeline = ReelScoreboardTimeline(
             playerOneName: "Alex", playerTwoName: "Lucio", games: [],
-            currentGamePoints: [PointEvent(player: 2, videoTimestamp: 0.5)], currentGameFirstServer: 1)
+            currentGamePoints: [
+                PointEvent(player: 2, videoTimestamp: 0.5), PointEvent(player: 1, videoTimestamp: 5.2),
+            ],
+            currentGameFirstServer: 1)
         let cues = timeline.cues(for: [ReelClip(highlight: highlight, reelDuration: 4)])
         let overlays = try await MediaExportService.scoreboardOverlays(cues, forReelFrom: source)
         let clip = MediaExportService.HighlightClipInfo(startTimestamp: 1, endTimestamp: 5, player: 1, gameNumber: 0)
@@ -248,9 +261,14 @@ struct ReelExportSourceTests {
 
         #expect(abs(reel.duration - 4) < 0.05)
         let frame = try await ReelFrames.frame(of: reel.outputURL, at: 1)
+        try ReelFrames.savePNG(frame, name: "scoreboard-plain-reel-1.0s")
         let size = CGSize(width: frame.width, height: frame.height)
+        let pixels = ReelPixels(frame)
+        // The picture is there (a transform pushing it off the canvas leaves a black frame)
+        let brightness = pixels.meanBrightness(in: CGRect(origin: .zero, size: size))
+        #expect(brightness > 20, "the frame should show the video, mean brightness \(brightness)")  // measured 51.8
         let box = ReelScoreboardLayout(videoSize: size).gamesBox(row: 0, in: size)
-        #expect(ReelPixels(frame).count(in: box, where: ReelPixels.isGold) == 0, "no board without cues")
+        #expect(pixels.count(in: box, where: ReelPixels.isGold) == 0, "no board without cues")
     }
 
     @Test("A source with sound keeps its sound under the scoreboard", .timeLimit(.minutes(3)))
@@ -305,6 +323,9 @@ struct ReelExportSourceTests {
         let size = CGSize(width: frame.width, height: frame.height)
         let layout = ReelScoreboardLayout(videoSize: size)
         let pixels = ReelPixels(frame)
+        // The picture is there (a transform pushing it off the canvas leaves a black frame)
+        let brightness = pixels.meanBrightness(in: CGRect(origin: .zero, size: size))
+        #expect(brightness > 20, "the frame should show the video, mean brightness \(brightness)")  // measured 51.7
         let goldInBox = pixels.count(in: layout.gamesBox(row: 0, in: size), where: ReelPixels.isGold)
         #expect(goldInBox == 0, "no board over a source that is not stored upright")
     }

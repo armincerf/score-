@@ -64,8 +64,11 @@ For each clip:
 - Points at clip start: points of that game with `videoTimestamp <= clip wall start` (the clip starts
   at the last scored point, so that point counts).
 - Server: `ServingLogic.serverForPoint(index: pointsPlayed, firstServer:)`.
-- If `player` is set and the clip is at least 3 s long, a second state for the last 1.2 s: that
-  player's points + 1, `pointWonBy` set, server recomputed.
+- Celebration, from the game's own points: the rally's point is the game's first point with a `videoTimestamp`
+  after the clip's start. If that point exists, was won by the clip's `player` and the clip is at least 3 s long,
+  a second state for the last 1.2 s: the score after that point, `pointWonBy` set, server recomputed. Otherwise
+  (no later point in that game, as when a forced End Game credits a still-pending highlight to the game winner;
+  or the point went to the other player) the clip keeps its one state.
 - Reel time ranges: cumulative clip durations, in clip order.
 
 ### Scoreboard: as built (and what changed from the plan)
@@ -88,6 +91,10 @@ For each clip:
 - The Core Image composition shows frames as stored, so the board is only drawn over a source stored upright
   (identity preferredTransform). The exported full video always is; a raw camera file kept as the full video after
   a failed full export may not be, and then the reel is exported plain (upright, no board) and a warning is logged.
+- Review fix: the celebration used to be `player`'s points + 1 whenever `player` was set. `finalizeGame` credits a
+  still-pending highlight to the game winner when the user forces End Game, so the board celebrated a point nobody
+  scored. It now follows the game's next recorded point (rule above); `ReelScoreboardTimelineTests` covers the
+  forced End Game and the point won by the other player.
 - Layout scales with the frame's short side, not its height, so the board also fits across portrait footage
   (unchanged for landscape).
 - Design pass at 720p/1080p: the celebration is now the winner's points cell turned white (black digits) plus a
@@ -145,14 +152,17 @@ For each clip:
 
 - Unit: `OrientationDecision`, `uprightGeometry` with each correction (see "Evidence" above),
   `ReelScoreboardTimeline` (score at clip start across games, deuce serving, pending highlight, short
-  clips without a celebration window, reel-time ranges), layout maths.
+  clips without a celebration window, no celebration without the rally's point, reel-time ranges), layout maths.
 - Integration, the composer (`scoreTests/ReelOverlayTests`): export a 4 s mock video with two cues, read
-  frames at 1 s, 3 s and 3.9 s, check the gold games box, the player chips, an untouched region and that
-  the panel is gone after the last cue. `make test` sets `REEL_FRAMES_DIR` so every PNG lands in
-  `.build/shots/reel/`.
+  frames at 1 s, 3 s and 3.9 s, check the gold games box, the player chips, an untouched region, the won point's
+  cell turning white with its digit changing, and that the panel is gone after the last cue. Digit changes on
+  the translucent panel are counted as changed ink pixels (`ReelPixels.inkChanges`: ink is the cell's minority
+  colour against its own median), because a mean difference there also moves with the video behind the panel
+  (an unchanged cell measured 4.4 and 3.9, over or near the old "> 4 means changed" threshold; ink changes: 0).
+  `make test` sets `REEL_FRAMES_DIR` so every PNG lands in `.build/shots/reel/`.
 - Integration, the real reel (`scoreTests/ReelExportTests`): a fabricated two-game match, two clips cut from
   a 12 s mock video through `exportHighlightReel` with the timeline's cues; frames at 1.0, 2.5, 4.0 and 6.5 s of
-  the reel are checked (gold boxes, chips, serve marker row, the lit row, the games digit and points cells
+  the reel are checked (gold boxes, chips, serve marker row, the lit row, the games digit and the points digits
   changing, the cut matching the source's frame at 7.0 s) and written as `scoreboard-reel-*.png`. The same suite
   covers a source with sound (the reel keeps it), a source stored rotated (plain upright reel), the plain reel
   without cues, the board at 1080p and 4K (`board-1080p.png`, `board-2160p.png`) and portrait footage.

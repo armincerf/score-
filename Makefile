@@ -44,11 +44,14 @@ build-watch: ## Build the watch app on its own
 	set -o pipefail; xcodebuild build -project $(PROJECT) -scheme "$(WATCH_SCHEME)" -destination '$(DEST_WATCH)' \
 	  CODE_SIGNING_ALLOWED=NO SWIFT_TREAT_WARNINGS_AS_ERRORS=YES 2>&1 | tee $(LOG_DIR)/build-watch.log | $(XCB)
 
+# -collect-test-diagnostics never: on a failure xcodebuild otherwise spends ~10 min in `simctl diagnose`
+# before it prints anything; the result bundle still holds every result.
 test: ## Run unit tests on the simulator (T=scoreTests/Suite or T=scoreTests/Suite/testName to filter)
 	@mkdir -p $(LOG_DIR) $(dir $(RESULT)); rm -rf $(RESULT)
 	udid=$$(scripts/simulator-udid.sh "$(SIM_NAME)"); mkdir -p $(BUILD_DIR)/shots/reel; \
 	xcodebuild test -project $(PROJECT) -scheme "$(SCHEME)" -destination "platform=iOS Simulator,id=$$udid" \
-	  -resultBundlePath $(RESULT) CODE_SIGNING_ALLOWED=NO SWIFT_TREAT_WARNINGS_AS_ERRORS=YES $(ONLY) \
+	  -resultBundlePath $(RESULT) -collect-test-diagnostics never \
+	  CODE_SIGNING_ALLOWED=NO SWIFT_TREAT_WARNINGS_AS_ERRORS=YES $(ONLY) \
 	  TEST_RUNNER_REEL_FRAMES_DIR="$(abspath $(BUILD_DIR))/shots/reel" 2>&1 | tee $(LOG_DIR)/test.log | $(XCB)
 	@scripts/test-summary.sh $(RESULT) || true
 

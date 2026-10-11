@@ -214,10 +214,10 @@ scripts/screenshot.sh --wait 15 --args "-seedSampleMatches -seedReel -openLatest
   as the newest match's full video and runs the real highlight reel export with the scoreboard (four 4.5 s
   clips scored from that match's highlights); `-openLatestMatch` opens the newest match's detail screen once
   that export has finished (about 2 s on the simulator). The reel player sits below the fold of the detail
-  screen: scroll it into view before capturing, e.g. `xcodebuildmcp ui-automation snapshot-ui --simulator-id
-  <udid>`, then `ui-automation swipe --within-element-ref <scroll ref> --direction up --distance 0.45` and
-  `xcrun simctl io <udid> screenshot out.png`. The seed wipes the simulator's store and its videos: only ever
-  pass it to `simctl`, never to a device. `-UIPreferredContentSizeCategoryName <UICTContentSizeCategory...>`
+  screen: scroll the player into view with any UI automation (for example xcodebuildmcp's `ui-automation
+  snapshot-ui` and `ui-automation swipe --within-element-ref <scroll ref> --direction up --distance 0.45`, if
+  installed; `make setup` does not install it), then capture with `xcrun simctl io <udid> screenshot out.png`.
+  The seed wipes the simulator's store and its videos: only ever pass it to `simctl`, never to a device. `-UIPreferredContentSizeCategoryName <UICTContentSizeCategory...>`
   is UIKit's own Dynamic Type override; check at least `AccessibilityL` for truncation.
 - `scripts/screenshot.sh --udid <UDID> --no-build --wait 5 out.png` targets another simulator or
   reuses the last build; `--wait` lengthens the launch-to-capture delay for slow screens.
@@ -404,15 +404,16 @@ a new one, so that is harmless.
   `UIDevice.current.orientation`, which is `.faceUp`/`.unknown` for a phone lying flat. Export
   rotates each segment by its own `preferredTransform`, then by the correction the orientation
   detector found in its pictures (see "Highlight reel").
-- `MockVideoGenerator` draws its text vertically mirrored ("MOCK MATCH VIDEO" sits at the bottom,
-  upside down and mirrored): UIKit string drawing into an unflipped CGContext. Tests compare the
-  source with the export rather than assume where the caption is.
+- A `CGContext` over a pixel buffer has its origin bottom-left; UIKit drawing assumes top-left. `MockVideoGenerator`
+  flips the CTM before `UIGraphicsPushContext`, so its clock reads normally and "MOCK MATCH VIDEO" sits along the
+  top edge (before October 2026 both came out upside down and mirrored, the caption at the bottom).
 - Mock footage has no audio track. `makeComposition` drops the composition's audio track when nothing
   was inserted into it; an empty one made every export of silent footage fail with -11838.
 - Vision text recognition on iOS 27 reads text at any rotation, so "can it read it" is no orientation
   oracle; where it puts the text box (normalized, origin bottom-left) is.
-- A failing `make test` can sit ~10 minutes in `simctl diagnose` before printing results (xcodebuild
-  collects diagnostics on failure); while iterating, call xcodebuild with `-collect-test-diagnostics never`.
+- On a test failure xcodebuild collects simulator diagnostics (`simctl diagnose`, ~10 minutes) before it
+  prints results; `make test` passes `-collect-test-diagnostics never`, so failures show at once (the result
+  bundle still has every result). Keep that flag if you change the target.
 - If `make test` reports "Failed to install or launch the test runner ... No such process" for
   every test, the simulator is in a bad state (typically after a killed xcodebuild): run
   `make sim-reset`, or add `-parallel-testing-enabled NO` to the xcodebuild test command.

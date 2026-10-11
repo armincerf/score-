@@ -138,11 +138,20 @@ struct ReelOverlayTests {
         let abovePanel = CGPoint(x: layout.panelFrame(in: size).midX, y: layout.panelFrame(in: size).minY - 20)
         #expect(exported.distance(to: original, at: abovePanel) < 40, "just above the panel should match the source")
 
-        // Between the cues the second board shows a different points cell and the same chip
+        // Between the cues the second board shows player one's point won: the cell turns white and its digit changes
+        // from 5 to 6 (ink = the cell's minority colour, white before and black after, so the turn to white alone
+        // does not count); player two's 3 and the chip stay. Measured (October 2026): cell median 16 -> 255, 40 ink
+        // pixels changed for 5 -> 6 (137 and 155 ink pixels), 0 for 3 -> 3 (whose old mean difference was 3.9,
+        // against a "> 4 means it changed" threshold)
         let later = ReelPixels(frameAfter)
-        #expect(
-            exported.meanDifference(to: later, in: layout.pointsCell(row: 0, in: size)) > 4,
-            "player one's points cell should change from 5 to 6")
+        let cellOne = layout.pointsCell(row: 0, in: size)
+        let cellBefore = exported.medianBrightness(in: cellOne)
+        let cellAfter = later.medianBrightness(in: cellOne)
+        #expect(cellBefore < 60 && cellAfter > 200, "the won point's cell turns white: \(cellBefore) -> \(cellAfter)")
+        let digitChange = exported.inkChanges(to: later, in: cellOne)
+        #expect(digitChange > 20, "5 -> 6 changed \(digitChange) ink pixels")
+        let unchanged = exported.inkChanges(to: later, in: layout.pointsCell(row: 1, in: size))
+        #expect(unchanged < 10, "3 -> 3 changed \(unchanged) ink pixels")
         #expect(
             exported.meanDifference(to: later, in: layout.chip(row: 0, in: size)) < 10,
             "the chip should not change between cues")

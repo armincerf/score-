@@ -34,7 +34,7 @@ struct ReelManagerExportTests {
     }
 
     /// A match with one 10 s recording from wall clock 0: Ann 2-1 Bob in game 1 (Bob served first), and one
-    /// highlight from the third point (3 s) to 7 s won by Ann.
+    /// highlight from the third point (3 s) to 7 s won by Ann (her point at 7.2 s makes it 3-1).
     private func recordMatch() async throws -> UUID {
         manager.setMatchName("Ann vs Bob", player1: "Ann", player2: "Bob")
         let matchId = try #require(manager.currentMatchId)
@@ -44,9 +44,10 @@ struct ReelManagerExportTests {
         state.recordingSegments = [
             RecordingSegment(fileReference: VideoStore.storedReference(for: segment), startOffset: 0)
         ]
-        state.currentGamePoints = [1, 1, 2].enumerated().map { index, player in
-            PointEvent(player: player, videoTimestamp: Double(index + 1))
-        }
+        state.currentGamePoints =
+            [1, 1, 2].enumerated().map { index, player in
+                PointEvent(player: player, videoTimestamp: Double(index + 1))
+            } + [PointEvent(player: 1, videoTimestamp: 7.2)]
         state.currentGameFirstServer = 2
         state.highlightClips = [HighlightClip(startTimestamp: 3, endTimestamp: 7, player: 1, gameNumber: 0)]
         manager.scoreState = state
