@@ -156,7 +156,9 @@ struct ComparisonRow: View {
 
 // MARK: - Matches
 
-/// "All / A won / B won" as a segmented control (a menu at accessibility text sizes, where segments would clip).
+/// "All / A won / B won" as a segmented control, or a menu when the segments would clip a label: at accessibility
+/// text sizes, and whenever the names are too long for a third of the row ("Lucio D'Alessandro won" would lose its
+/// "won", the word that says what the segment does).
 struct MeetingFilterPicker: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Binding var filter: HeadToHeadFilter
@@ -169,7 +171,11 @@ struct MeetingFilterPicker: View {
             if dynamicTypeSize.isAccessibilitySize {
                 options.pickerStyle(.menu)
             } else {
-                options.pickerStyle(.segmented)
+                // The segmented control's ideal width fits every label whole; ViewThatFits falls back when it can't
+                ViewThatFits(in: .horizontal) {
+                    options.pickerStyle(.segmented)
+                    options.pickerStyle(.menu)
+                }
             }
         }
         .textCase(nil)
