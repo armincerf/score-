@@ -6,12 +6,16 @@
 //  launched with one of these arguments (see scripts/screenshot.sh and AGENTS.md, "Screenshots"):
 //    -seedEmpty           remove every stored match (the empty home screen)
 //    -seedSampleMatches   replace every stored match with six finished sample matches
+//    -seedLeague          replace every stored match with twelve finished matches between four players (Alex,
+//                         Lucio, Mia, Sam) over the last three months, Alex vs Lucio in both orders, one without a
+//                         winner: the Stats page with a leaderboard and a choice of players
 //    -seedActiveMatch     add an in-progress match (combine with the above for a full home screen)
 //    -showNewMatchSheet   open the new-match sheet as soon as the home screen appears
 //    -seedReel            with -seedSampleMatches: give the newest match a 20 s mock recording and export its
 //                         highlight reel, scoreboard included, through the real export (a few seconds)
 //    -seedReelPortrait    like -seedReel, but the mock recording is portrait (720x1280), for the player's portrait shape
 //    -openLatestMatch     open the newest match's detail screen (once the -seedReel export, if any, is done)
+//    -openStats           open the Stats page as the home screen appears
 //    -landscapeAfter N    turn the interface to landscape N seconds after the home screen first appears (the
 //                         simulator cannot be rotated from the shell); e.g. 25 leaves time to start a video first
 //  e.g. `xcrun simctl launch booted armincerf.score -seedSampleMatches -seedActiveMatch`
@@ -31,6 +35,8 @@
         static var seedsEmpty: Bool { arguments.contains("-seedEmpty") }
         static var seedsSampleMatches: Bool { arguments.contains("-seedSampleMatches") }
         static var seedsActiveMatch: Bool { arguments.contains("-seedActiveMatch") }
+        static var seedsLeague: Bool { arguments.contains("-seedLeague") }
+        static var opensStats: Bool { arguments.contains("-openStats") }
         static var showsNewMatchSheet: Bool { arguments.contains("-showNewMatchSheet") }
         static var seedsReel: Bool { arguments.contains("-seedReel") || seedsPortraitReel }
         static var seedsPortraitReel: Bool { arguments.contains("-seedReelPortrait") }
@@ -47,11 +53,19 @@
         /// The `-seedReel` export, started at launch; the `-openLatestMatch` hook waits for it.
         private(set) static var reelExport: Task<Void, Never>?
         private static var openedLatestMatch = false
+        private static var openedStats = false
 
         /// True once per launch with `-openLatestMatch` (the home screen appears again on the way back).
         static func takeOpenLatestMatchRequest() -> Bool {
             guard opensLatestMatch, !openedLatestMatch else { return false }
             openedLatestMatch = true
+            return true
+        }
+
+        /// True once per launch with `-openStats` (the home screen appears again on the way back).
+        static func takeOpenStatsRequest() -> Bool {
+            guard opensStats, !openedStats else { return false }
+            openedStats = true
             return true
         }
 
@@ -77,9 +91,26 @@
             ([(9, 11), (11, 7), (8, 11), (11, 13)], 1),  // 1-3 player two
         ]
 
+        /// The `-seedLeague` matches, oldest first: players (player one first), game scores and how many days ago.
+        /// Mia 3-2, Lucio 4-2-1, Alex 3-4-1, Sam 1-3; Alex vs Lucio 1-3 with one match without a winner.
+        private static let leagueMatches: [(players: (String, String), games: [(Int, Int)], daysAgo: Int)] = [
+            (("Alex", "Lucio"), [(11, 7), (11, 9), (8, 11), (11, 6)], 84),
+            (("Mia", "Sam"), [(11, 4), (11, 8), (11, 9)], 78),
+            (("Lucio", "Alex"), [(11, 9), (7, 11), (11, 8), (11, 13), (11, 6)], 71),
+            (("Sam", "Alex"), [(9, 11), (11, 7), (6, 11), (8, 11)], 63),
+            (("Mia", "Lucio"), [(11, 9), (9, 11), (11, 7), (11, 5)], 55),
+            (("Alex", "Mia"), [(8, 11), (11, 9), (9, 11), (11, 13)], 47),
+            (("Lucio", "Sam"), [(11, 6), (11, 8), (12, 10)], 39),
+            (("Alex", "Lucio"), [(11, 8), (9, 11)], 31),  // ended early: no winner
+            (("Sam", "Mia"), [(11, 9), (8, 11), (11, 7), (11, 9)], 22),
+            (("Lucio", "Alex"), [(11, 6), (9, 11), (11, 9), (11, 7)], 14),
+            (("Mia", "Alex"), [(9, 11), (11, 8), (6, 11), (9, 11)], 7),
+            (("Alex", "Lucio"), [(11, 9), (8, 11), (11, 13), (11, 7), (9, 11)], 2),
+        ]
+
         /// Wipes the stored matches and writes the requested sample data. Call before anything reads the store.
         static func applyIfRequested(eventStore: EventStore, modelContext: ModelContext) {
-            guard seedsEmpty || seedsSampleMatches || seedsActiveMatch else { return }
+            guard seedsEmpty || seedsSampleMatches || seedsLeague || seedsActiveMatch else { return }
             do {
                 // Row by row: a batch delete trips over the match <-> events inverse relationship
                 for match in try modelContext.fetch(FetchDescriptor<StoredMatch>()) {
@@ -95,6 +126,13 @@
                         try writeFinishedMatch(sample.games, daysAgo: sample.daysAgo, index: index, store: eventStore)
                     }
                 }
+                if seedsLeague {
+                    for (index, sample) in leagueMatches.enumerated() {
+                        try writeFinishedMatch(
+                            sample.games, players: sample.players, daysAgo: sample.daysAgo, index: index,
+                            store: eventStore)
+                    }
+                }
                 if seedsReel {
                     if seedsSampleMatches {
                         try startReelExport(store: eventStore)
@@ -108,7 +146,8 @@
                 UserPreferencesService(modelContext: modelContext)
                     .updatePlayerNames(player1: playerOne, player2: playerTwo)
                 Log.store.info(
-                    "Debug seed applied (sample matches: \(seedsSampleMatches), active: \(seedsActiveMatch))")
+                    "Debug seed applied (sample matches: \(seedsSampleMatches), league: \(seedsLeague), active: \(seedsActiveMatch))"
+                )
             } catch {
                 Log.store.error("Debug seed failed: \(error)")
             }
@@ -118,10 +157,11 @@
 
         /// A finished best-of-five match: every point, one highlight per game, game and match end events.
         private static func writeFinishedMatch(
-            _ games: [(Int, Int)], daysAgo: Int, index: Int, store: EventStore
+            _ games: [(Int, Int)], players: (String, String) = (playerOne, playerTwo), daysAgo: Int, index: Int,
+            store: EventStore
         ) throws {
             let start = Calendar.current.date(byAdding: .day, value: -daysAgo, to: eveningToday) ?? Date()
-            var match = MatchWriter(store: store, start: start, seed: UInt64(index + 1))
+            var match = MatchWriter(store: store, start: start, seed: UInt64(index + 1), players: players)
             try match.start(initialServer: index.isMultiple(of: 2) ? 1 : 2)
             for (number, game) in games.enumerated() {
                 try match.playGame(number: number, playerOne: game.0, playerTwo: game.1, highlightAt: 4)
@@ -202,15 +242,18 @@
         private struct MatchWriter {
             let store: EventStore
             let start: Date
+            /// Player one's and player two's names.
+            let players: (one: String, two: String)
             let matchId = UUID()
             private var sequence = 0
             private var elapsed: TimeInterval = 0
             private var random: UInt64
             private var gamesWon = (one: 0, two: 0)
 
-            init(store: EventStore, start: Date, seed: UInt64) {
+            init(store: EventStore, start: Date, seed: UInt64, players: (String, String) = (playerOne, playerTwo)) {
                 self.store = store
                 self.start = start
+                self.players = players
                 random = seed
             }
 
@@ -228,14 +271,14 @@
             }
 
             mutating func start(initialServer: Int) throws {
-                let name = "\(playerOne) vs \(playerTwo) - \(start.formatted(date: .abbreviated, time: .shortened))"
+                let name = "\(players.one) vs \(players.two) - \(start.formatted(date: .abbreviated, time: .shortened))"
                 _ = try store.createMatch(
-                    id: matchId, matchName: name, playerOneName: playerOne, playerTwoName: playerTwo,
+                    id: matchId, matchName: name, playerOneName: players.one, playerTwoName: players.two,
                     startTimestamp: start)
                 try store.append(
                     event: MatchStartedEvent(
                         matchId: matchId, timestamp: start, sequenceNumber: nextSequence(), matchName: name,
-                        playerOneName: playerOne, playerTwoName: playerTwo, recordingStartTime: start,
+                        playerOneName: players.one, playerTwoName: players.two, recordingStartTime: start,
                         initialServer: initialServer))
             }
 
