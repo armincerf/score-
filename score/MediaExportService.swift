@@ -388,6 +388,34 @@ enum MediaExportService {
         progressHandler(1.0)
     }
 
+    // MARK: - Retry without the board
+
+    /// Whether drawing the scoreboard may be why an export failed, so that the export without it could succeed. A
+    /// full disk, an interrupted session (the app went to the background) or a cancelled task fails the plain export
+    /// just the same. Pure so it can be unit-tested.
+    nonisolated static func boardMayHaveCaused(_ error: any Error) -> Bool {
+        if error is CancellationError { return false }
+        let nsError = error as NSError
+        let lasting: [(domain: String, codes: Set<Int>)] = [
+            (AVFoundationErrorDomain, [AVError.Code.diskFull.rawValue, AVError.Code.operationInterrupted.rawValue]),
+            (NSCocoaErrorDomain, [NSFileWriteOutOfSpaceError, NSUserCancelledError]),
+            (NSPOSIXErrorDomain, [Int(ENOSPC)]),
+        ]
+        if lasting.contains(where: { $0.domain == nsError.domain && $0.codes.contains(nsError.code) }) {
+            return false
+        }
+        if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError {
+            return boardMayHaveCaused(underlying)
+        }
+        return true
+    }
+
+    /// A retry's `progress` (0...1) placed in what is left of the bar after `floor`, so the bar never moves back.
+    nonisolated static func retryProgress(_ progress: Double, after floor: Double) -> Double {
+        let start = min(max(floor, 0), 1)
+        return start + (1 - start) * min(max(progress, 0), 1)
+    }
+
     // MARK: - Errors
 
     enum ExportError: Error, LocalizedError, Sendable {

@@ -872,10 +872,11 @@ class WatchConnectivityManager: NSObject {
         Log.match.info(
             "🎬 Match scoreboard: \(board.count) cue(s) over \(Int(footage.timeline.totalDuration))s, \(Set(board.map(\.state)).count) board(s)"
         )
-        let result = await exportRetryingWithoutBoard(board, what: "Full video") { cues in
+        let result = await exportRetryingWithoutBoard(board, what: "Full video", progressHandler: progressHandler) {
+            cues, progress in
             try await MediaExportService.exportFullVideo(
                 segments: footage.segments, corrections: footage.corrections, scoreboard: cues, to: output,
-                quality: quality, progressHandler: progressHandler)
+                quality: quality, progressHandler: progress)
         }
         if let result {
             Log.match.info("✅ Full video exported: \(result.outputURL.lastPathComponent), \(result.duration)s")
@@ -934,31 +935,48 @@ class WatchConnectivityManager: NSObject {
         Log.match.info("🎬 Reel scoreboard: \(scoreboard.count) cue(s)")
 
         let output = VideoStore.fileURL(matchId: matchId, kind: .highlights)
-        let result = await exportRetryingWithoutBoard(scoreboard, what: "Highlight reel") { board in
+        let result = await exportRetryingWithoutBoard(
+            scoreboard, what: "Highlight reel", progressHandler: progressHandler
+        ) { board, progress in
             try await MediaExportService.exportHighlightReel(
-                pieces: plan.pieces, to: output, scoreboard: board, quality: quality, progressHandler: progressHandler)
+                pieces: plan.pieces, to: output, scoreboard: board, quality: quality, progressHandler: progress)
         }
         if let result { Log.match.info("✅ Highlight reel saved: \(result.outputURL.lastPathComponent)") }
         return result?.outputURL
     }
 
-    /// Runs `export` with `scoreboard` and, when that fails, once more without it, so a failure in drawing the board
-    /// costs the board rather than the whole video. Returns nil when the plain export fails too.
+    /// Runs `export` with `scoreboard` and, when that fails in a way the board may have caused, once more without
+    /// it, so a failure in drawing the board costs the board rather than the whole video. A full disk, an
+    /// interruption or a cancellation fails the plain export just the same and is not retried. The retry's progress
+    /// fills what is left of the bar, so it never moves back. Returns nil when the export fails.
     private func exportRetryingWithoutBoard(
-        _ scoreboard: [ReelScoreboardCue], what: String,
-        _ export: ([ReelScoreboardCue]) async throws -> MediaExportService.ExportResult
+        _ scoreboard: [ReelScoreboardCue], what: String, progressHandler: @escaping MediaExportService.ProgressHandler,
+        _ export: ([ReelScoreboardCue], @escaping MediaExportService.ProgressHandler) async throws ->
+            MediaExportService.ExportResult
     ) async -> MediaExportService.ExportResult? {
+        let reached = ExportProgressMark()
         do {
-            return try await export(scoreboard)
+            return try await export(scoreboard) { progress in
+                reached.value = max(reached.value, progress)
+                progressHandler(progress)
+            }
         } catch {
-            guard !scoreboard.isEmpty else {
+            guard !scoreboard.isEmpty, MediaExportService.boardMayHaveCaused(error) else {
                 Log.match.error("❌ \(what, privacy: .public) export failed: \(error.localizedDescription)")
                 return nil
             }
             Log.match.warning(
                 "⚠️ \(what, privacy: .public) export with the scoreboard failed, retrying without it: \(error.localizedDescription)"
             )
-            return await exportRetryingWithoutBoard([], what: what, export)
+            let floor = reached.value
+            do {
+                return try await export([]) { progress in
+                    progressHandler(MediaExportService.retryProgress(progress, after: floor))
+                }
+            } catch {
+                Log.match.error("❌ \(what, privacy: .public) export failed: \(error.localizedDescription)")
+                return nil
+            }
         }
     }
 
@@ -1396,4 +1414,9 @@ class WatchConnectivityManager: NSObject {
             matchHistory: scoreState.matchHistory
         )
     }
+}
+
+/// How far an export's progress has got (0...1), so a retry can carry on from there.
+private final class ExportProgressMark {
+    var value = 0.0
 }
