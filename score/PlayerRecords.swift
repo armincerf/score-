@@ -6,8 +6,8 @@
 //  per opponent and their matches, and head-to-head between any two players (`HeadToHead`, HeadToHead.swift).
 //  Pure and value-typed. Players are recognised as everywhere else (`MatchPlayers.names(of:)`/`key`: trimmed,
 //  case-insensitive, names recovered from the "A vs B - date" match name when missing); a match without two
-//  usable names, or with the same player on both sides, counts for nobody. A player is shown as most recently
-//  spelled.
+//  usable names, with the same player on both sides, or ended before any game finished (0-0) counts for nobody.
+//  A player is shown as most recently spelled.
 //
 
 import Foundation
@@ -97,10 +97,11 @@ nonisolated struct PlayedMatch: Equatable, Sendable {
     let winner: Int
     let highlightCount: Int
 
-    /// The matches of `history` (oldest first) that have two different players, in the same order.
+    /// The matches of `history` (oldest first) that have two different players and at least one finished game,
+    /// in the same order.
     static func all(in history: [MatchResult]) -> [PlayedMatch] {
         history.enumerated().compactMap { index, match in
-            guard let names = MatchPlayers.names(of: match) else { return nil }
+            guard isPlayed(match), let names = MatchPlayers.names(of: match) else { return nil }
             let one = MatchPlayers.key(names.playerOne)
             let two = MatchPlayers.key(names.playerTwo)
             guard !one.isEmpty, !two.isEmpty, one != two else { return nil }
@@ -116,6 +117,13 @@ nonisolated struct PlayedMatch: Equatable, Sendable {
                 winner: match.hasWinner ? match.winner : MatchResult.noWinner,
                 highlightCount: match.highlightCount)
         }
+    }
+
+    /// Whether `match` recorded a finished game. One ended before any game finished (`endMatch` discards the
+    /// unfinished game and saves it 0-0 without a winner: a mistaken start, "Save & Start New" straight away) was
+    /// never played, so it counts for nobody; a games tie such as 1-1 is a real draw.
+    static func isPlayed(_ match: MatchResult) -> Bool {
+        match.playerOneGames + match.playerTwoGames > 0
     }
 
     /// The most recent spelling of the player `id` in `played` (oldest first).

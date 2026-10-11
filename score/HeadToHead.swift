@@ -35,11 +35,13 @@ nonisolated struct HeadToHead: Equatable, Sendable {
     /// The matches between them, newest first, seen from this record's sides.
     let meetings: [HeadToHeadMeeting]
 
-    /// The record for the players of the last match in `history` (oldest first). Names are compared trimmed and
-    /// case-insensitively, in either order; a match whose names are missing (and not in its "A vs B - date" match
-    /// name either) belongs to no pair. Nil for an empty history or when the last match has no usable names.
+    /// The record for the players of the last played match in `history` (oldest first; a match ended before any
+    /// game finished is skipped, see `PlayedMatch.isPlayed`). Names are compared trimmed and case-insensitively, in
+    /// either order; a match whose names are missing (and not in its "A vs B - date" match name either) belongs to
+    /// no pair. Nil without a played match or when the last one has no usable names.
     static func from(history: [MatchResult]) -> HeadToHead? {
-        guard let latest = history.last, let names = MatchPlayers.names(of: latest) else { return nil }
+        guard let latest = history.last(where: PlayedMatch.isPlayed), let names = MatchPlayers.names(of: latest)
+        else { return nil }
         return between(names.playerOne, names.playerTwo, in: history)
     }
 

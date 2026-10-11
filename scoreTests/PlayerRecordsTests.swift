@@ -73,6 +73,39 @@ struct PlayerRecordsTests {
         #expect(alex.winRate == 0.5)
     }
 
+    @Test func matchEndedBeforeAnyGameFinishedCountsForNobody() throws {
+        // End Match at 6-4 in game one (or "Save & Start New" at once) discards the game: saved 0-0, no winner
+        let history = [
+            Self.match("Alex", "Lucio", 3, 1, day: 1), Self.match("Lucio", "Alex", 0, 3, day: 2),
+            Self.match("Alex", "Lucio", 3, 2, day: 3),
+        ]
+        let unplayed = Self.match("Alex", "Lucio", 0, 0, winner: MatchResult.noWinner, day: 4)
+        let before = PlayerRecords(history: history)
+        let after = PlayerRecords(history: history + [unplayed])
+        #expect(after.leaderboard == before.leaderboard)
+        let alex = try #require(after.player("alex"))
+        #expect((alex.wins, alex.losses, alex.draws, alex.winRate) == (3, 0, 0, 1))
+        #expect(alex.form == [.win, .win, .win])
+        #expect(alex.streak == PlayerStreak(outcome: .win, count: 3))
+        #expect(after.opponents(of: "alex") == before.opponents(of: "alex"))
+        #expect(after.matches(of: "alex").map(\.historyIndex) == [2, 1, 0])
+        let record = try #require(after.headToHead("alex", "lucio"))
+        #expect((record.playerOneWins, record.playerTwoWins, record.draws, record.matchesPlayed) == (3, 0, 0, 3))
+        // A games tie after real games is still a draw
+        let tied = PlayerRecords(history: history + [Self.match("Alex", "Lucio", 1, 1, day: 4)])
+        #expect(tied.player("alex")?.draws == 1)
+    }
+
+    @Test func homeRecordSkipsALatestMatchWithoutGames() throws {
+        let history = [
+            Self.match("Alex", "Lucio", 3, 1), Self.match("Mia", "Sam", 0, 0, winner: MatchResult.noWinner),
+        ]
+        let home = try #require(HeadToHead.from(history: history))
+        #expect((home.playerOneName, home.playerTwoName, home.matchesPlayed) == ("Alex", "Lucio", 1))
+        #expect(PlayerRecords(history: history).latestPair.map { [$0.playerOne, $0.playerTwo] } == ["alex", "lucio"])
+        #expect(HeadToHead.from(history: [history[1]]) == nil)
+    }
+
     @Test func gamesAndPointsAreSummedFromEachSide() throws {
         let history = [
             Self.match("Alex", "Lucio", 2, 1, points: [(11, 7), (9, 11), (11, 9)]),
