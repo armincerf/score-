@@ -52,7 +52,11 @@ score/                      iOS app target
   GameView.swift              Live match: camera preview, RecordingStatusBar (capture state), ScoringPanel, alerts
   ExportProgressView.swift    Modal shown while finishActiveMatch() stops, exports and saves (Game + Home)
   MatchHistoryView.swift      List of finished matches (scoreState.matchHistory, reloaded from the store at launch)
-  MatchDetailView.swift       One match: videos, AI summary, stats, games, highlights
+  MatchDetailView.swift       One match: header, videos, AI summary, stats, games, highlights
+  MatchVideosSection.swift    Detail screen's video card: Highlights / Full match picker, inline player, Full Screen + Share, empty states
+  MatchVideoPlayback.swift    @Observable: the match's videos, selection (switching pauses), one lazy AVPlayer each, display sizes
+  MatchVideoPlayer.swift      AVPlayerViewController representable (system controls) + full-screen presentation (header button, turn to landscape)
+  InlinePlayerLayout.swift    Pure: video display size (uprightGeometry) + width + screen height -> inline player frame (16:9 fallback)
   CameraSettingsView.swift    Lens/quality/enabled prefs + live preview; CameraDeviceType, VideoQualityPreset
   CameraPreviewManager.swift  Settings preview session (serial session queue, permission state) + CameraPreviewUIView (horizon-level preview)
   WatchConnectivityManager.swift           Phone hub: match lifecycle, scoring, recording, export, AI (see "Known debt")
@@ -61,12 +65,12 @@ score/                      iOS app target
   RecordingTimeline.swift     RecordingSegment + wall-clock offset -> concatenated-video time mapping (gaps clamp)
   VideoRotationCorrection.swift Extra clockwise turn a segment needs beyond its metadata (transform, EXIF orientation) + OrientationDecision
   VideoOrientationDetector.swift Samples frames, scores upright people per orientation with Vision body pose, decides; BodyPoseEvidence
-  AudioSessionCoordinator.swift Owns AVAudioSession for a match (play-and-record to speaker; released at match end)
+  AudioSessionCoordinator.swift Owns AVAudioSession: a match (play-and-record to speaker; released at match end), else the detail player (.playback)
   MediaExportService.swift    Concatenates segments upright (per-track preferredTransform) + cuts the reel (scoreboard burned in); export(to:as:) with progress
   ReelScoreboard.swift        Broadcast-style scoreboard for the reel: state, pixel layout per video size, SwiftUI view, ImageRenderer
   ReelScoreboardTimeline.swift Pure: match data + reel clips -> board states with reel-time ranges (score at clip start, celebration)
   ReelOverlayComposer.swift   Burns time-ranged bitmaps (the scoreboard) into a video composition per frame with Core Image
-  MockVideoGenerator.swift    Synthetic video for the simulator (no camera)
+  MockVideoGenerator.swift    Synthetic video for the simulator (no camera); 1280x720 unless given a size
   VideoTransferable.swift     ShareLink/Transferable wrapper for exported videos
   VideoStore.swift            Application Support/Videos: per-match file names, stored references, legacy URL resolve
   ScoreState.swift            In-memory match state + PointEvent/GameResult/MatchResult/HighlightClip + watch dictionary codec
@@ -204,6 +208,10 @@ make screenshot OUT=.build/shots/home-ax.png NO_BUILD=1 \
   ARGS="-seedSampleMatches -UIPreferredContentSizeCategoryName UICTContentSizeCategoryAccessibilityL"
 # the newest match's detail screen with a real exported reel (mock footage + scoreboard); --wait covers the export
 scripts/screenshot.sh --wait 15 --args "-seedSampleMatches -seedReel -openLatestMatch" .build/shots/reel-detail.png
+# the same with a portrait (720x1280) recording, for the inline player's portrait shape
+scripts/screenshot.sh --no-build --wait 20 --args "-seedSampleMatches -seedReelPortrait -openLatestMatch" .build/shots/portrait.png
+# the same in landscape (the interface turns as the home screen appears; the player is below the fold there)
+scripts/screenshot.sh --no-build --wait 20 --args "-seedSampleMatches -seedReel -openLatestMatch -landscapeAfter 0" .build/shots/landscape.png
 ```
 
 - Launch arguments are read by `score/DebugSeed.swift` (DEBUG builds only): `-seedEmpty` removes
@@ -213,17 +221,26 @@ scripts/screenshot.sh --wait 15 --args "-seedSampleMatches -seedReel -openLatest
   games, 5-3 in game two), so the home screen shows its resume state; `-showNewMatchSheet` opens the
   new-match sheet on the home screen; `-seedReel` (with `-seedSampleMatches`) writes a 20 s mock recording
   as the newest match's full video and runs the real highlight reel export with the scoreboard (four 4.5 s
-  clips scored from that match's highlights); `-openLatestMatch` opens the newest match's detail screen once
-  that export has finished (about 2 s on the simulator). The reel player sits below the fold of the detail
-  screen: scroll the player into view with any UI automation (for example xcodebuildmcp's `ui-automation
-  snapshot-ui` and `ui-automation swipe --within-element-ref <scroll ref> --direction up --distance 0.45`, if
-  installed; `make setup` does not install it), then capture with `xcrun simctl io <udid> screenshot out.png`.
+  clips scored from that match's highlights); `-seedReelPortrait` does the same with a 720x1280 recording;
+  `-landscapeAfter <seconds>` turns the interface to landscape that long after the home screen first appears
+  (`requestGeometryUpdate`; the simulator cannot be rotated from the shell): with 25, start the reel first to see
+  the turn open the full-screen player. In landscape, xcodebuildmcp's ref taps land in the wrong place; `axe tap
+  --label <label> --udid <udid>` works (show the controls with `axe tap --label Video` first);
+  `-openLatestMatch` opens the newest match's detail screen once that export has finished (about 2 s on the
+  simulator). A landscape reel's player is above the fold; a portrait one (420 pt tall) is not: scroll it into
+  view with any UI automation (for example xcodebuildmcp's `ui-automation snapshot-ui` and `ui-automation swipe
+  --within-element-ref <scroll ref> --direction up --distance 0.45`, if installed; `make setup` does not install
+  it), then capture with `xcrun simctl io <udid> screenshot out.png`. To show the player's controls use a
+  physical tap on the "Video" element (`axe tap --label Video --tap-style physical --udid <udid>`): xcodebuildmcp's
+  `touch` on it only toggles playback. AVKit's controls auto-hide after ~3 s while playing, so read them
+  (`axe describe-ui`) straight after the tap; a tap on the centre of the video also hits play/pause.
   The seed wipes the simulator's store and its videos: only ever pass it to `simctl`, never to a device. `-UIPreferredContentSizeCategoryName <UICTContentSizeCategory...>`
   is UIKit's own Dynamic Type override; check at least `AccessibilityL` for truncation.
 - `scripts/screenshot.sh --udid <UDID> --no-build --wait 5 out.png` targets another simulator or
   reuses the last build; `--wait` lengthens the launch-to-capture delay for slow screens.
-- `.build/shots/` is gitignored; the home screen's renders live in `docs/screenshots/` (`sips -Z 1000` copies):
-  refresh them when the home screen changes.
+- `.build/shots/` is gitignored; the home screen's renders and the detail screen's player
+  (`reel-detail-player.png`, from `-seedSampleMatches -seedReel -openLatestMatch`) live in `docs/screenshots/`
+  (`sips -Z 1000` copies): refresh them when those screens change.
 
 ## Highlight reel
 
@@ -283,6 +300,28 @@ scripts/screenshot.sh --wait 15 --args "-seedSampleMatches -seedReel -openLatest
   `board-1080p.png`, `manager-reel-*.png`, ...); look at them with the Read tool whenever the board or the
   composer changes. When sampling pixels in tests, avoid glyphs (the digits are black on the gold box):
   sample corners or compare regions. Shared helpers: `scoreTests/ReelFrameSupport.swift`.
+- **Playback** (match detail, `MatchVideosSection`, directly below the header card): one inline player with a
+  segmented Highlights / Full match picker (when both exist; Highlights first). It is AVKit's
+  `AVPlayerViewController` in a representable (`MatchVideoPlayer`), not SwiftUI's `VideoPlayer`, which showed no
+  controls on this screen; Live Text (`allowsVideoFrameAnalysis`) is off because it took taps on paused frames.
+  `InlinePlayerLayout` shapes the player like the video: the display size comes from the file's first video track
+  (`naturalSize` + `preferredTransform` through `MediaExportService.uprightGeometry`), fitted into the card's width
+  and a height cap of 420 pt, less on a short screen (landscape fills the width, portrait is as tall as the cap
+  and centred, 16:9 until the size is read).
+  Full screen: the system controls' expand button (AVKit's own full screen), or the header's Full Screen button,
+  which presents a second `AVPlayerViewController` on the same `AVPlayer` modally (`.fullScreen`) from the inline
+  one, so it continues at the same position; a request counter (not a flag) means nothing is reset on Done.
+  Both rotate with the device (the plist allows landscape). Turning the phone to landscape while the inline video
+  plays opens the modal full-screen player, as the system video apps do (paused, it only re-lays out the card);
+  `LandscapeFullScreenTrigger` keeps a full-screen player closed in landscape from reopening when the screen
+  learns of the turn afterwards. The player's height is capped at 80 % of the scroll view's visible height
+  (`InlinePlayerLayout.maxHeight(forViewportHeight:)`, measured in `MatchDetailView`), so in landscape (about
+  304 pt on an iPhone 17 Pro) the whole video and its scrubber fit on screen. Sound: outside a match the inline
+  player sets the `.playback`/`.moviePlayback` category (`AudioSessionCoordinator.prepareForPlayback`; AVPlayer
+  activates the session on play, so opening the screen leaves other apps' audio alone) and releases the session
+  when removed; the default solo-ambient category would be muted by the Ring/Silent switch. A live match keeps
+  its own session (`isMatchLive`). The inline player pauses in `dismantleUIViewController` (leaving the screen, switching video), never `onDisappear`,
+  which also fires while a full-screen player covers the screen. `-seedReelPortrait` renders the portrait case.
 - Design and remaining work: `docs/plans/highlight-reel.md`.
 
 ## Icon

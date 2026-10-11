@@ -216,6 +216,11 @@ For each clip:
 - Real app: `-seedSampleMatches -seedReel` writes a 20 s mock recording for the newest sample match and runs
   the real export (four 4.5 s clips scored from that match's highlights) so `MatchDetailView` plays a reel with the
   board; `-openLatestMatch` opens it once the export is done (see AGENTS.md, Screenshots).
+- Playback (October 2026): the detail screen plays the reel in a player shaped like the video with the
+  system controls and two routes into full screen (`MatchVideosSection`, `MatchVideoPlayer`, `InlinePlayerLayout`;
+  see AGENTS.md "Playback"). Verified on the simulator with screenshots (16:9 and portrait inline, controls, both
+  full-screen routes, landscape via `-landscapeAfter`, dark mode, AccessibilityL); physical rotation and sound with
+  the Ring/Silent switch on still need a phone.
 - Real footage: checked on device through TestFlight (**not done yet**), with the detector's per-orientation
   scores in the logs (`Orientation <file>: none=... -> ...`).
 

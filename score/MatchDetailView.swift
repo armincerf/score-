@@ -2,10 +2,9 @@
 //  MatchDetailView.swift
 //  score
 //
-//  Detailed match view with highlight reel playback
+//  One finished match: header, videos (MatchVideosSection), AI summary, stats, games and highlights
 //
 
-import AVKit
 import FoundationModels
 import SwiftUI
 import os
@@ -14,16 +13,14 @@ struct MatchDetailView: View {
     let match: MatchResult
     let matchNumber: Int
     let allMatches: [MatchResult]
+    /// Visible height of the scroll view, for the video player's height cap (see `InlinePlayerLayout`).
+    @State private var viewportHeight: CGFloat = 0
 
     init(match: MatchResult, matchNumber: Int, allMatches: [MatchResult] = []) {
         self.match = match
         self.matchNumber = matchNumber
         self.allMatches = allMatches
     }
-
-    @State private var highlightPlayer: AVPlayer?
-    @State private var fullVideoPlayer: AVPlayer?
-    @State private var currentVideoIndex = 0
 
     private var dateFormatter: DateFormatter {
         let formatter = DateFormatter()
@@ -40,27 +37,6 @@ struct MatchDetailView: View {
     private var highlightVideoURL: URL? { Self.existingVideo(match.highlightVideoURL) }
 
     private var fullVideoURL: URL? { Self.existingVideo(match.fullVideoURL) }
-
-    private struct VideoOption {
-        let title: String
-        let player: AVPlayer?
-        let url: URL?
-        let icon: String
-    }
-
-    private var availableVideos: [VideoOption] {
-        var videos: [VideoOption] = []
-
-        if let url = highlightVideoURL {
-            videos.append(VideoOption(title: "Highlight Reel", player: highlightPlayer, url: url, icon: "star.fill"))
-        }
-
-        if let url = fullVideoURL {
-            videos.append(VideoOption(title: "Full Match", player: fullVideoPlayer, url: url, icon: "video.fill"))
-        }
-
-        return videos
-    }
 
     private var playerOneName: String {
         match.playerOneName ?? "Player 1"
@@ -152,6 +128,10 @@ struct MatchDetailView: View {
                 .background(Color.gray.opacity(0.1))
                 .cornerRadius(12)
 
+                MatchVideosSection(
+                    highlightVideo: highlightVideoURL, fullVideo: fullVideoURL, highlightCount: match.highlightCount,
+                    viewportHeight: viewportHeight)
+
                 // AI Match Summary
                 MatchSummaryContainer(matchResult: match, allMatches: allMatches)
 
@@ -210,116 +190,6 @@ struct MatchDetailView: View {
                 .background(Color.gray.opacity(0.1))
                 .cornerRadius(12)
 
-                // Video carousel
-                if !availableVideos.isEmpty {
-                    VStack(spacing: 0) {
-                        TabView(selection: $currentVideoIndex) {
-                            ForEach(Array(availableVideos.enumerated()), id: \.offset) { index, video in
-                                VStack(spacing: 12) {
-                                    // Video header
-                                    HStack {
-                                        Image(systemName: video.icon)
-                                            .foregroundColor(index == 0 ? .yellow : .blue)
-                                        Text(video.title)
-                                            .font(.headline)
-                                        Spacer()
-
-                                        // Share button
-                                        if let url = video.url {
-                                            ShareLink(
-                                                item: VideoTransferable(
-                                                    url: url,
-                                                    name: video.title
-                                                ),
-                                                preview: SharePreview(
-                                                    video.title,
-                                                    image: Image(systemName: video.icon)
-                                                )
-                                            ) {
-                                                Image(systemName: "square.and.arrow.up")
-                                                    .font(.title3)
-                                            }
-                                            .buttonStyle(.bordered)
-                                        }
-                                    }
-                                    .padding(.horizontal)
-                                    .padding(.top, 12)
-
-                                    // Video player
-                                    if let player = video.player {
-                                        VideoPlayer(player: player)
-                                            .frame(height: 300)
-                                            .cornerRadius(12)
-                                            .padding(.horizontal)
-                                            .onDisappear {
-                                                player.pause()
-                                            }
-                                    } else {
-                                        Rectangle()
-                                            .fill(Color.gray.opacity(0.3))
-                                            .frame(height: 300)
-                                            .cornerRadius(12)
-                                            .padding(.horizontal)
-                                            .overlay(
-                                                ProgressView()
-                                            )
-                                    }
-
-                                    // Page indicator hint
-                                    if availableVideos.count > 1 {
-                                        Text("Swipe to see \(index == 0 ? "full match" : "highlights")")
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                            .padding(.bottom, 8)
-                                    }
-                                }
-                                .tag(index)
-                            }
-                        }
-                        .tabViewStyle(.page(indexDisplayMode: availableVideos.count > 1 ? .always : .never))
-                        .frame(height: availableVideos.count > 1 ? 400 : 370)
-                    }
-                } else {
-                    // No videos message
-                    let totalHighlights = match.highlightCount
-                    if totalHighlights == 0 {
-                        VStack(spacing: 12) {
-                            Image(systemName: "star.slash")
-                                .font(.largeTitle)
-                                .foregroundColor(.gray)
-                            Text("No highlights marked")
-                                .font(.headline)
-                                .foregroundColor(.secondary)
-                            Text(
-                                "Use the double-tap gesture on your watch or the star button to mark highlights during play"
-                            )
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                        }
-                        .padding()
-                        .frame(maxWidth: .infinity)
-                        .background(Color.gray.opacity(0.1))
-                        .cornerRadius(12)
-                    } else {
-                        VStack(spacing: 12) {
-                            Image(systemName: "video.slash")
-                                .font(.largeTitle)
-                                .foregroundColor(.gray)
-                            Text("Video processing...")
-                                .font(.headline)
-                                .foregroundColor(.secondary)
-                            Text("\(totalHighlights) highlights were marked")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        .padding()
-                        .frame(maxWidth: .infinity)
-                        .background(Color.gray.opacity(0.1))
-                        .cornerRadius(12)
-                    }
-                }
-
                 // Games breakdown
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Games")
@@ -358,32 +228,12 @@ struct MatchDetailView: View {
             }
             .padding()
         }
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.height  // the safe area: below the navigation bar, above the home indicator
+        } action: { height in
+            viewportHeight = height
+        }
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear {
-            loadVideos()
-        }
-    }
-
-    private func loadVideos() {
-        // Debug logging
-        Log.ui.debug("Loading videos for match")
-        Log.ui.debug("Highlight URL: \(match.highlightVideoURL ?? "nil")")
-        Log.ui.debug("Full video URL: \(match.fullVideoURL ?? "nil")")
-
-        // References are store file names (or legacy absolute URLs); VideoStore resolves both
-        if let url = highlightVideoURL {
-            highlightPlayer = AVPlayer(url: url)
-        } else {
-            Log.ui.debug("No highlight video on disk")
-        }
-
-        if let url = fullVideoURL {
-            fullVideoPlayer = AVPlayer(url: url)
-        } else {
-            Log.ui.debug("No full video on disk")
-        }
-
-        Log.ui.debug("Available videos count: \(availableVideos.count)")
     }
 }
 
