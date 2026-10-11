@@ -126,9 +126,10 @@ nonisolated struct ReelScoreboardTimeline: Sendable {
         return (start, won)
     }
 
-    // MARK: - Private
+    // MARK: - Shared with MatchScoreboardTimeline
 
-    private func game(number: Int) -> (points: [PointEvent], firstServer: Int?)? {
+    /// A game's points and first server: a finished game, or the game in progress (number `games.count`).
+    func game(number: Int) -> (points: [PointEvent], firstServer: Int?)? {
         if games.indices.contains(number) {
             return (games[number].points, games[number].firstServer)
         }
@@ -136,7 +137,7 @@ nonisolated struct ReelScoreboardTimeline: Sendable {
     }
 
     /// Who serves the next point once `played` points of the game have been played.
-    private func server(afterPoints played: Int, firstServer: Int?) -> Int? {
+    func server(afterPoints played: Int, firstServer: Int?) -> Int? {
         firstServer.map { ServingLogic.serverForPoint(index: played, firstServer: $0) }
     }
 }
