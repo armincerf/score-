@@ -244,6 +244,12 @@ scripts/screenshot.sh --wait 15 --args "-seedSampleMatches -seedReel -openLatest
 - The board is SwiftUI (`ReelScoreboardView`, previewable) rasterised once per state with
   `ImageRenderer` at the pixel size `ReelScoreboardLayout` derives from the video's short side, on the main
   actor, before the export starts (`MediaExportService.scoreboardOverlays`; identical states share a bitmap).
+  Type is sized for the reel watched inline on a phone (about 340 pt wide in MatchDetailView): at 720p rows
+  50 px, digits 29 px, names 25 px heavy condensed capitals, in a panel 440 px wide (capped at the short side
+  less both 32 px margins). Both names share one size: `ReelScoreboardView.nameFontSize` measures them with the
+  font that draws them and `ReelScoreboardLayout.sharedNameFontSize` shrinks both until the wider fits
+  `nameColumnWidth` (re-measuring, since SF tracks small sizes looser; floor 0.6), so a long name never shrinks
+  only its own row. `ReelScoreboardLayoutTests` checks it on `board-long-name.png` / `board-full-names.png`.
 - What the board shows is pure: `ReelScoreboardTimeline` turns the match (`scoreState`) and the reel's clips
   (each `HighlightClip` with its reel duration, in reel order) into `ReelScoreboardCue`s: the score as the
   clip starts (points with `videoTimestamp <= clip start`), who serves, and for attributed clips of 3 s or more
