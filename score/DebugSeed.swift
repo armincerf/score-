@@ -8,6 +8,9 @@
 //    -seedSampleMatches   replace every stored match with six finished sample matches
 //    -seedActiveMatch     add an in-progress match (combine with the above for a full home screen)
 //    -showNewMatchSheet   open the new-match sheet as soon as the home screen appears
+//    -seedReel            with -seedSampleMatches: give the newest match a 20 s mock recording and export its
+//                         highlight reel, scoreboard included, through the real export (a few seconds)
+//    -openLatestMatch     open the newest match's detail screen (once the -seedReel export, if any, is done)
 //  e.g. `xcrun simctl launch booted armincerf.score -seedSampleMatches -seedActiveMatch`
 //
 
@@ -25,6 +28,19 @@
         static var seedsSampleMatches: Bool { arguments.contains("-seedSampleMatches") }
         static var seedsActiveMatch: Bool { arguments.contains("-seedActiveMatch") }
         static var showsNewMatchSheet: Bool { arguments.contains("-showNewMatchSheet") }
+        static var seedsReel: Bool { arguments.contains("-seedReel") }
+        static var opensLatestMatch: Bool { arguments.contains("-openLatestMatch") }
+
+        /// The `-seedReel` export, started at launch; the `-openLatestMatch` hook waits for it.
+        private(set) static var reelExport: Task<Void, Never>?
+        private static var openedLatestMatch = false
+
+        /// True once per launch with `-openLatestMatch` (the home screen appears again on the way back).
+        static func takeOpenLatestMatchRequest() -> Bool {
+            guard opensLatestMatch, !openedLatestMatch else { return false }
+            openedLatestMatch = true
+            return true
+        }
 
         /// Finished sample matches, oldest first: game scores (player one first) and how many days ago.
         private static let sampleMatches: [(games: [(Int, Int)], daysAgo: Int)] = [
@@ -42,6 +58,7 @@
             do {
                 // Row by row: a batch delete trips over the match <-> events inverse relationship
                 for match in try modelContext.fetch(FetchDescriptor<StoredMatch>()) {
+                    VideoStore.removeAll(matchId: match.id)  // its recordings and exports
                     modelContext.delete(match)  // cascades to its events
                 }
                 for orphan in try modelContext.fetch(FetchDescriptor<StoredMatchEvent>()) {
@@ -51,6 +68,13 @@
                 if seedsSampleMatches {
                     for (index, sample) in sampleMatches.enumerated() {
                         try writeFinishedMatch(sample.games, daysAgo: sample.daysAgo, index: index, store: eventStore)
+                    }
+                }
+                if seedsReel {
+                    if seedsSampleMatches {
+                        try startReelExport(store: eventStore)
+                    } else {
+                        Log.store.warning("Debug seed: -seedReel needs -seedSampleMatches")
                     }
                 }
                 if seedsActiveMatch {
@@ -87,6 +111,57 @@
             try match.start(initialServer: 1)
             try match.playGame(number: 0, playerOne: 11, playerTwo: 8, highlightAt: 6)
             try match.playPoints(game: 1, order: [1, 2, 1, 1, 2, 1, 2, 1], highlightAt: 3)
+        }
+
+        // MARK: - Highlight reel
+
+        /// Points the newest finished match at its full video and reel files and starts writing them: a 20 s mock
+        /// recording, then the real reel export with the scoreboard (see `exportReel`).
+        private static func startReelExport(store: EventStore) throws {
+            guard let match = try store.getAllMatches().first(where: { !$0.isActive }) else { return }
+            var state = try StateProjector().project(events: store.getEvents(matchId: match.id), matchMetadata: match)
+            state.playerOneName = match.playerOneName
+            state.playerTwoName = match.playerTwoName
+            let full = VideoStore.fileURL(matchId: match.id, kind: .full)
+            let reel = VideoStore.fileURL(matchId: match.id, kind: .highlights)
+            // Referenced before the files exist: history is loaded right after the seed, the export finishes later
+            match.fullVideoURL = VideoStore.storedReference(for: full)
+            match.highlightVideoURL = VideoStore.storedReference(for: reel)
+            try store.updateMatch(match)
+            let highlights = state.highlightClips + (state.pendingHighlight.map { [$0] } ?? [])
+            let timeline = ReelScoreboardTimeline(scoreState: state)
+            reelExport = Task { await exportReel(timeline: timeline, highlights: highlights, full: full, reel: reel) }
+        }
+
+        /// The match's first four highlights (scored from the match's own points), each cut as 4.5 s of a 20 s mock
+        /// recording: clip k covers 5k to 5k + 4.5 s, long enough for the celebration at its end.
+        private static func exportReel(
+            timeline: ReelScoreboardTimeline, highlights: [HighlightClip], full: URL, reel: URL
+        ) async {
+            let clock = ContinuousClock()
+            let start = clock.now
+            guard let source = await MockVideoGenerator.generateMockVideo(duration: 20, to: full) else {
+                Log.store.error("Debug seed: mock recording failed")
+                return
+            }
+            let picked = Array(highlights.prefix(4))
+            let clipLength = 4.5
+            let clips = picked.enumerated().map { index, highlight in
+                MediaExportService.HighlightClipInfo(
+                    startTimestamp: Double(index) * 5, endTimestamp: Double(index) * 5 + clipLength,
+                    player: highlight.player, gameNumber: highlight.gameNumber)
+            }
+            let cues = timeline.cues(for: picked.map { ReelClip(highlight: $0, reelDuration: clipLength) })
+            do {
+                let overlays = try await MediaExportService.scoreboardOverlays(cues, forReelFrom: source)
+                let result = try await MediaExportService.exportHighlightReel(
+                    from: source, to: reel, clips: clips, scoreboard: overlays)
+                Log.store.info(
+                    "Debug seed: reel of \(clips.count) clips, \(overlays.count) scoreboard cues, \(result.duration)s, written in \(String(describing: start.duration(to: clock.now)))"
+                )
+            } catch {
+                Log.store.error("Debug seed: reel export failed: \(error)")
+            }
         }
 
         /// 18:30 today, so sample matches sit at a plausible time of day whatever the current time.

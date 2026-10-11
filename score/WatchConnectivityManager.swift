@@ -879,10 +879,8 @@ class WatchConnectivityManager: NSObject {
         return RecordingTimeline(segments: segments)
     }
 
-    /// Cuts the marked highlight clips out of the full recording.
-    /// Returns nil when there are no clips or the export fails.
-    /// Cuts the marked highlight clips (wall-clock ranges) out of the exported full video.
-    /// Returns nil when there are no clips with footage or the export fails.
+    /// Cuts the marked highlight clips (wall-clock ranges) out of the exported full video, with the broadcast
+    /// scoreboard burned in. Returns nil when there are no clips with footage or the export fails.
     private func exportHighlightReel(
         matchId: UUID,
         from source: URL?,
@@ -893,17 +891,19 @@ class WatchConnectivityManager: NSObject {
         guard let source else { return nil }
         // A highlight marked after the final point is still pending; it belongs in the reel too
         let marked = scoreState.highlightClips + (scoreState.pendingHighlight.map { [$0] } ?? [])
-        let clips = marked.compactMap { clip -> MediaExportService.HighlightClipInfo? in
+        // Reel order = marked order: the clips (video time) and the scoreboard's view of them (wall clock) line up
+        var clips: [MediaExportService.HighlightClipInfo] = []
+        var reelClips: [ReelClip] = []
+        for clip in marked {
             guard let range = timeline.videoRange(wallStart: clip.startTimestamp, wallEnd: clip.endTimestamp) else {
                 Log.match.warning("⚠️ Highlight \(clip.id) has no footage (recording was paused)")
-                return nil
+                continue
             }
-            return MediaExportService.HighlightClipInfo(
-                startTimestamp: range.lowerBound,
-                endTimestamp: range.upperBound,
-                player: clip.player,
-                gameNumber: clip.gameNumber
-            )
+            clips.append(
+                MediaExportService.HighlightClipInfo(
+                    startTimestamp: range.lowerBound, endTimestamp: range.upperBound, player: clip.player,
+                    gameNumber: clip.gameNumber))
+            reelClips.append(ReelClip(highlight: clip, reelDuration: range.upperBound - range.lowerBound))
         }
         guard !clips.isEmpty else {
             Log.match.debug("No highlight footage - only saving full video")
@@ -911,11 +911,22 @@ class WatchConnectivityManager: NSObject {
         }
         Log.match.info("🎬 Generating highlight reel with \(clips.count) of \(marked.count) highlights")
 
+        let cues = ReelScoreboardTimeline(scoreState: scoreState).cues(for: reelClips)
+        let scoreboard: [OverlayCue]
+        do {
+            scoreboard = try await MediaExportService.scoreboardOverlays(cues, forReelFrom: source)
+        } catch {
+            Log.match.error("❌ Reel scoreboard not rendered, exporting without it: \(error.localizedDescription)")
+            scoreboard = []
+        }
+        Log.match.info("🎬 Reel scoreboard: \(cues.count) cue(s), \(scoreboard.count) rendered")
+
         do {
             let result = try await MediaExportService.exportHighlightReel(
                 from: source,
                 to: VideoStore.fileURL(matchId: matchId, kind: .highlights),
                 clips: clips,
+                scoreboard: scoreboard,
                 quality: quality,
                 progressHandler: progressHandler
             )
