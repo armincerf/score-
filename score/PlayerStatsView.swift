@@ -71,12 +71,18 @@ private struct PlayerSummarySection: View {
     }
 }
 
-/// The win rate large, with the record and form beside it.
+/// The win rate large, with the record and form beside it (under it at accessibility text sizes).
 private struct PlayerHeadline: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let player: PlayerRecord
 
     var body: some View {
-        HStack(alignment: .center, spacing: 16) {
+        let isStacked = dynamicTypeSize.isAccessibilitySize
+        let layout =
+            isStacked
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(alignment: .center, spacing: 16))
+        layout {
             VStack(alignment: .leading, spacing: 0) {
                 Text(player.winRate, format: .percent.precision(.fractionLength(0)))
                     .font(.system(.largeTitle, design: .rounded, weight: .bold))
@@ -86,7 +92,7 @@ private struct PlayerHeadline: View {
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            VStack(alignment: .trailing, spacing: 6) {
+            VStack(alignment: isStacked ? .leading : .trailing, spacing: 6) {
                 RecordText(wins: player.wins, losses: player.losses, draws: player.draws)
                     .font(.title3.weight(.semibold))
                 FormMarks(form: player.form)
@@ -262,6 +268,8 @@ struct FormMarks: View {
         }
         (marks ?? Text(verbatim: ""))
             .font(.caption)
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
             .accessibilityLabel(
                 Text("Last \(form.count): \(form.map { String(localized: $0.title) }.formatted(.list(type: .and)))"))
     }
