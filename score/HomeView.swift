@@ -20,6 +20,8 @@ struct HomeView: View {
     @State private var player2Name = ""
     @State private var isFinishingMatch = false
     @State private var showingSaveFailedAlert = false
+    /// Pages pushed by value: the Stats pages (`StatsRoute`).
+    @State private var path = NavigationPath()
     #if DEBUG
         @State private var showingLatestMatch = false  // -openLatestMatch screenshot hook, see DebugSeed
     #endif
@@ -29,7 +31,7 @@ struct HomeView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             HomeContent(
                 history: connectivity.scoreState.matchHistory,
                 // An open match stays on the home screen after a failed save (recording off) so it can be ended again
@@ -46,6 +48,13 @@ struct HomeView: View {
             .navigationTitle("Table Tennis")
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
+                if !connectivity.scoreState.matchHistory.isEmpty {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Stats", systemImage: "chart.bar.xaxis") {
+                            path.append(StatsRoute.stats)
+                        }
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Settings", systemImage: "gearshape") {
                         showingSettings = true
@@ -57,6 +66,9 @@ struct HomeView: View {
             }
             .navigationDestination(isPresented: $showingGame) {
                 GameView()
+            }
+            .navigationDestination(for: StatsRoute.self) { route in
+                StatsRouteView(route: route)
             }
             #if DEBUG
                 .navigationDestination(isPresented: $showingLatestMatch) {
@@ -74,6 +86,9 @@ struct HomeView: View {
                         showingNameSheet = true
                     }
                     Task { await DebugSeed.turnToLandscapeIfRequested() }  // screenshot hook, see DebugSeed
+                    if DebugSeed.takeOpenStatsRequest() {  // screenshot hook, see DebugSeed
+                        path.append(StatsRoute.stats)
+                    }
                     if DebugSeed.takeOpenLatestMatchRequest() {  // screenshot hook: after the -seedReel export
                         Task {
                             await DebugSeed.reelExport?.value

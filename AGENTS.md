@@ -45,10 +45,14 @@ Builds need no booted simulator; `make test` needs an iOS 27 simulator runtime
 score/                      iOS app target
   ScoreApp.swift              @main; builds the ModelContainer and WatchConnectivityManager
   ContentView.swift           Root view -> HomeView
-  HomeView.swift              Home screen: presentation state, sheets, alerts; New Match flow (active-match alert, name sheet)
-  HomeSections.swift          Home dashboard cards (active match / head-to-head, recent matches, watch status), empty state, New Match bar button
+  HomeView.swift              Home screen: presentation state, sheets, alerts; New Match flow (active-match alert, name sheet); NavigationPath + StatsRoute destination
+  HomeSections.swift          Home dashboard cards (active match / head-to-head with a Stats link, recent matches, watch status), empty state, New Match bar button
   MatchNameSheet.swift        New Match sheet: Form with the two player names, Cancel / Start
-  HeadToHead.swift            Pure head-to-head record of the latest match's players (wins, draws, matches); AI previousMeetings extends it
+  HeadToHead.swift            Pure head-to-head of any two players (between(_:_:in:); from(history:) = latest match's pair): wins, draws, games, points, meetings + winner filter; AI previousMeetings extends it
+  PlayerRecords.swift         Pure records for the Stats pages: PlayedMatch (resolved players), leaderboard, PlayerRecord (streak, form), per-opponent records, a player's matches
+  StatsView.swift             Stats page (leaderboard + head-to-head with player choice), StatsModel, StatsRoute + StatsRouteView (the pages behind its rows)
+  PlayerStatsView.swift       A player's page (record, opponents, matches) + LeaderboardRow, RecordText, FormMarks, OutcomeBadge
+  HeadToHeadStatsView.swift   A pair's comparison and matches (All / A won / B won: segmented, a menu when a label would clip) as list sections, and as a page of its own
   GameView.swift              Live match: camera preview, RecordingStatusBar (capture state), ScoringPanel, alerts
   ExportProgressView.swift    Modal shown while finishActiveMatch() stops, exports and saves (Game + Home)
   MatchHistoryView.swift      List of finished matches (scoreState.matchHistory, reloaded from the store at launch)
@@ -100,7 +104,7 @@ scripts/                    xcb.sh (xcodebuild filter), deploy-device.sh (device
                             detect-orientation.sh + orientation/ (the app's orientation detector as a Mac CLI)
 docs/icons/                 Rendered icon previews (ictool exports)
 docs/plans/                 Design notes for larger pieces of work (highlight-reel.md: orientation fix + scoreboard overlay)
-docs/screenshots/           Home screen and reel-player renders (make screenshot output, refresh when those screens change)
+docs/screenshots/           Home screen, Stats page and reel-player renders (make screenshot output, refresh when those screens change)
 .github/workflows/ci.yml    lint (macos-26) + build/test (xcode-27 image)
 ```
 
@@ -125,6 +129,15 @@ docs/screenshots/           Home screen and reel-player renders (make screenshot
   first) from the finished `StoredMatch`es; anything that re-projects the active match must
   keep that history. Undo marks an event `isUndone` and appends an
   `eventUndone` event; projection skips undone events.
+- **Stats** are derived, never stored: `PlayerRecords(history:)` recomputes every record from
+  `scoreState.matchHistory` (`StatsModel` caches it per history change). Players are recognised as in
+  the head-to-head and the AI summary (`MatchPlayers.names(of:)`/`key`: trimmed, case-insensitive,
+  either order, names recovered from the "A vs B - date" match name); a match without two different
+  players, or ended before any game finished (saved 0-0, `PlayedMatch.isPlayed`; the home card skips
+  it too), counts for nobody, and a player shows as most recently spelled. Leaderboard order: win rate
+  (a match without a winner is played, not won), wins, fewer losses, name. The Stats pages are
+  `StatsRoute` values on HomeView's `NavigationPath`, resolved at the stack's root: a value link on a
+  page pushed with `navigationDestination(isPresented:)` does not push.
 - **Match rules** live in `ScoreAnnouncementUtils`/`ServingLogic` and are applied by
   `WatchConnectivityManager`: a game ends itself at 11 with two clear; a game win that
   decides the best of five sets `matchWonBy` and GameView offers to end the match; End Game
@@ -206,6 +219,9 @@ make screenshot OUT=.build/shots/home-dark.png DARK=1 NO_BUILD=1 ARGS="-seedSamp
 make screenshot OUT=.build/shots/sheet.png NO_BUILD=1 ARGS="-seedSampleMatches -showNewMatchSheet"
 make screenshot OUT=.build/shots/home-ax.png NO_BUILD=1 \
   ARGS="-seedSampleMatches -UIPreferredContentSizeCategoryName UICTContentSizeCategoryAccessibilityL"
+# the Stats page: four players (leaderboard + player choice), or two (no choice), or none (empty state)
+make screenshot OUT=.build/shots/stats.png NO_BUILD=1 ARGS="-seedLeague -openStats"
+make screenshot OUT=.build/shots/stats-two.png NO_BUILD=1 ARGS="-seedSampleMatches -openStats"
 # the newest match's detail screen with a real exported reel (mock footage + scoreboard); --wait covers the export
 scripts/screenshot.sh --wait 15 --args "-seedSampleMatches -seedReel -openLatestMatch" .build/shots/reel-detail.png
 # the same with a portrait (720x1280) recording, for the inline player's portrait shape
@@ -218,7 +234,11 @@ scripts/screenshot.sh --no-build --wait 20 --args "-seedSampleMatches -seedReel 
   every stored match (a launch without seed arguments keeps whatever the last run stored); `-seedSampleMatches`
   replaces every stored match with six finished Alex vs Lucio matches (one with no winner, each with
   points, highlights and game events); `-seedActiveMatch` adds a live match 14 minutes in (1-0 in
-  games, 5-3 in game two), so the home screen shows its resume state; `-showNewMatchSheet` opens the
+  games, 5-3 in game two), so the home screen shows its resume state; `-seedLeague` replaces every stored match
+  with twelve finished matches between Alex, Lucio, Mia and Sam over the last three months (Alex vs Lucio in both
+  name orders, one without a winner): the Stats page with a leaderboard and a choice of players; `-openStats`
+  opens the Stats page as the home screen appears (the head-to-head's matches and the player pages are below
+  it: scroll or tap with UI automation, e.g. the "Lucio won" segment); `-showNewMatchSheet` opens the
   new-match sheet on the home screen; `-seedReel` (with `-seedSampleMatches`) writes a 20 s mock recording
   as the newest match's full video and runs the real highlight reel export with the scoreboard (four 4.5 s
   clips scored from that match's highlights); `-seedReelPortrait` does the same with a 720x1280 recording;
@@ -238,9 +258,10 @@ scripts/screenshot.sh --no-build --wait 20 --args "-seedSampleMatches -seedReel 
   is UIKit's own Dynamic Type override; check at least `AccessibilityL` for truncation.
 - `scripts/screenshot.sh --udid <UDID> --no-build --wait 5 out.png` targets another simulator or
   reuses the last build; `--wait` lengthens the launch-to-capture delay for slow screens.
-- `.build/shots/` is gitignored; the home screen's renders and the detail screen's player
-  (`reel-detail-player.png`, from `-seedSampleMatches -seedReel -openLatestMatch`) live in `docs/screenshots/`
-  (`sips -Z 1000` copies): refresh them when those screens change.
+- `.build/shots/` is gitignored; the home screen's renders, the detail screen's player
+  (`reel-detail-player.png`, from `-seedSampleMatches -seedReel -openLatestMatch`) and the Stats page
+  (`stats.png`, from `-seedLeague -openStats`) live in `docs/screenshots/` (`sips -Z 1000` copies): refresh them
+  when those screens change.
 
 ## Highlight reel
 

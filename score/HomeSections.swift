@@ -265,16 +265,26 @@ struct ActiveMatchFooter: View {
     }
 }
 
-/// Wins of the most recent match's players against each other.
+/// Wins of the most recent match's players against each other, with a link to every player's stats.
 struct HeadToHeadCard: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let record: HeadToHead
 
     var body: some View {
+        // At accessibility text sizes the link sits under the title, as in the recent matches card
+        let headerLayout =
+            dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+            : AnyLayout(HStackLayout(alignment: .firstTextBaseline))
         VStack(spacing: 12) {
-            Text("Head to Head")
-                .font(.headline)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityAddTraits(.isHeader)
+            headerLayout {
+                Text("Head to Head")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityAddTraits(.isHeader)
+                NavigationLink("Stats", value: StatsRoute.stats)
+                    .font(.subheadline)
+            }
             VersusScoreboard(
                 playerOneName: record.playerOneName, playerOneValue: record.playerOneWins,
                 playerTwoName: record.playerTwoName, playerTwoValue: record.playerTwoWins, unit: .wins)
