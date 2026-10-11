@@ -12,13 +12,16 @@ import UIKit
 import os
 
 nonisolated enum MockVideoGenerator {
-    private static let videoSize = CGSize(width: 1280, height: 720)
+    /// The default frame size: 720p landscape, like a phone recording held sideways.
+    static let defaultSize = CGSize(width: 1280, height: 720)
     private static let fps: Int32 = 30
 
-    /// Renders `duration` seconds of placeholder frames into a temporary .mov file.
-    /// Runs off the main actor; returns nil if writing fails.
+    /// Renders `duration` seconds of placeholder frames of `size` pixels (stored upright: identity transform) into
+    /// `outputURL`, or a temporary .mov file. Runs off the main actor; returns nil if writing fails.
     @concurrent
-    static func generateMockVideo(duration: TimeInterval = 60.0, to outputURL: URL? = nil) async -> URL? {
+    static func generateMockVideo(
+        duration: TimeInterval = 60.0, to outputURL: URL? = nil, size videoSize: CGSize = defaultSize
+    ) async -> URL? {
         let fileURL =
             outputURL
             ?? FileManager.default.temporaryDirectory
@@ -59,7 +62,7 @@ nonisolated enum MockVideoGenerator {
 
         for frame in 0..<totalFrames {
             let currentTime = Double(frame) / Double(fps)
-            guard let buffer = createFrame(time: currentTime) else { continue }
+            guard let buffer = createFrame(time: currentTime, size: videoSize) else { continue }
             let presentationTime = CMTime(value: Int64(frame), timescale: fps)
             do {
                 try await receiver.append(CVReadOnlyPixelBuffer(unsafeBuffer: buffer), with: presentationTime)
@@ -80,7 +83,7 @@ nonisolated enum MockVideoGenerator {
         return fileURL
     }
 
-    private static func createFrame(time: TimeInterval) -> CVPixelBuffer? {
+    private static func createFrame(time: TimeInterval, size videoSize: CGSize) -> CVPixelBuffer? {
         var pixelBuffer: CVPixelBuffer?
         let options: [String: Any] = [
             kCVPixelBufferCGImageCompatibilityKey as String: true,
@@ -115,11 +118,11 @@ nonisolated enum MockVideoGenerator {
             return nil
         }
 
-        draw(in: context, time: time)
+        draw(in: context, time: time, size: videoSize)
         return buffer
     }
 
-    private static func draw(in context: CGContext, time: TimeInterval) {
+    private static func draw(in context: CGContext, time: TimeInterval, size videoSize: CGSize) {
         // UIKit draws in top-left coordinates, but a bitmap context's origin is bottom-left: flip it first, or the
         // text comes out upside down and mirrored with the caption at the bottom
         context.translateBy(x: 0, y: videoSize.height)

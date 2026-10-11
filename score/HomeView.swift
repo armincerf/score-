@@ -73,6 +73,7 @@ struct HomeView: View {
                         prepareMatchName()
                         showingNameSheet = true
                     }
+                    Task { await DebugSeed.turnToLandscapeIfRequested() }  // screenshot hook, see DebugSeed
                     if DebugSeed.takeOpenLatestMatchRequest() {  // screenshot hook: after the -seedReel export
                         Task {
                             await DebugSeed.reelExport?.value

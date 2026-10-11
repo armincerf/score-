@@ -10,13 +10,17 @@
 //    -showNewMatchSheet   open the new-match sheet as soon as the home screen appears
 //    -seedReel            with -seedSampleMatches: give the newest match a 20 s mock recording and export its
 //                         highlight reel, scoreboard included, through the real export (a few seconds)
+//    -seedReelPortrait    like -seedReel, but the mock recording is portrait (720x1280), for the player's portrait shape
 //    -openLatestMatch     open the newest match's detail screen (once the -seedReel export, if any, is done)
+//    -landscapeAfter N    turn the interface to landscape N seconds after the home screen first appears (the
+//                         simulator cannot be rotated from the shell); e.g. 25 leaves time to start a video first
 //  e.g. `xcrun simctl launch booted armincerf.score -seedSampleMatches -seedActiveMatch`
 //
 
 #if DEBUG
     import Foundation
     import SwiftData
+    import UIKit
     import os
 
     enum DebugSeed {
@@ -28,8 +32,17 @@
         static var seedsSampleMatches: Bool { arguments.contains("-seedSampleMatches") }
         static var seedsActiveMatch: Bool { arguments.contains("-seedActiveMatch") }
         static var showsNewMatchSheet: Bool { arguments.contains("-showNewMatchSheet") }
-        static var seedsReel: Bool { arguments.contains("-seedReel") }
+        static var seedsReel: Bool { arguments.contains("-seedReel") || seedsPortraitReel }
+        static var seedsPortraitReel: Bool { arguments.contains("-seedReelPortrait") }
         static var opensLatestMatch: Bool { arguments.contains("-openLatestMatch") }
+        /// Seconds after `-landscapeAfter`, if given.
+        static var landscapeDelay: Double? {
+            guard let index = arguments.firstIndex(of: "-landscapeAfter"), index + 1 < arguments.count else {
+                return nil
+            }
+            return Double(arguments[index + 1])
+        }
+        private static var turnedToLandscape = false
 
         /// The `-seedReel` export, started at launch; the `-openLatestMatch` hook waits for it.
         private(set) static var reelExport: Task<Void, Never>?
@@ -40,6 +53,18 @@
             guard opensLatestMatch, !openedLatestMatch else { return false }
             openedLatestMatch = true
             return true
+        }
+
+        /// Turns the interface to landscape once per launch, `-landscapeAfter` seconds after the first call.
+        static func turnToLandscapeIfRequested() async {
+            guard let delay = landscapeDelay, !turnedToLandscape else { return }
+            turnedToLandscape = true
+            try? await Task.sleep(for: .seconds(delay))
+            let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+            scene?.requestGeometryUpdate(.iOS(interfaceOrientations: .landscapeRight)) { error in
+                Log.ui.error("Debug seed: landscape refused: \(error)")
+            }
+            Log.ui.info("Debug seed: turned to landscape")
         }
 
         /// Finished sample matches, oldest first: game scores (player one first) and how many days ago.
@@ -74,7 +99,7 @@
                     if seedsSampleMatches {
                         try startReelExport(store: eventStore)
                     } else {
-                        Log.store.warning("Debug seed: -seedReel needs -seedSampleMatches")
+                        Log.store.warning("Debug seed: -seedReel / -seedReelPortrait need -seedSampleMatches")
                     }
                 }
                 if seedsActiveMatch {
@@ -134,13 +159,15 @@
         }
 
         /// The match's first four highlights (scored from the match's own points), each cut as 4.5 s of a 20 s mock
-        /// recording: clip k covers 5k to 5k + 4.5 s, long enough for the celebration at its end.
+        /// recording (720x1280 with -seedReelPortrait, 1280x720 otherwise): clip k covers 5k to 5k + 4.5 s, long
+        /// enough for the celebration at its end.
         private static func exportReel(
             timeline: ReelScoreboardTimeline, highlights: [HighlightClip], full: URL, reel: URL
         ) async {
             let clock = ContinuousClock()
             let start = clock.now
-            guard let source = await MockVideoGenerator.generateMockVideo(duration: 20, to: full) else {
+            let size = seedsPortraitReel ? CGSize(width: 720, height: 1280) : MockVideoGenerator.defaultSize
+            guard let source = await MockVideoGenerator.generateMockVideo(duration: 20, to: full, size: size) else {
                 Log.store.error("Debug seed: mock recording failed")
                 return
             }
