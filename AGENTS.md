@@ -315,8 +315,9 @@ scripts/screenshot.sh --no-build --wait 20 --args "-seedSampleMatches -seedReel 
   [none, clockwise90, none] and scripted points: lit and settled points cells, the turned segment letterboxed
   under the board; a reel cut from them with exactly one board, portrait from its first piece, a clip across the
   boundary as two pieces; `match-full-*.png`, `match-reel-*.png`), `ScoreboardOverlaySourceTests` (cache bound over
-  400 states, misses, prefetch), `MatchScoreboardTimelineTests` (the rules), `ExportTimingTests` (default
-  compositor vs FrameCompositor on a 60 s 720p mock, `export-timing.txt`), `scoreTests/ReelOverlayTests` (a 4 s
+  400 states, misses, prefetch), `MatchScoreboardTimelineTests` (the rules), `ExportTimingTests` (opt-in,
+  `TEST_RUNNER_EXPORT_TIMING=1 make test T=scoreTests/ExportTimingTests`: default compositor vs FrameCompositor on a
+  60 s 720p mock, `export-timing.txt`), `scoreTests/ReelOverlayTests` (a 4 s
   mock with two cues),
   `ReelExportTests` (the real reel: a fabricated two-game match, two clips, frames at 1.0/2.5/4.0/6.5 s;
   plus sound, rotated, corrected and cue-less sources and the 1080p/4K/portrait layouts), `ReelManagerExportTests`

@@ -6,6 +6,8 @@
 //  REEL_FRAMES_DIR/export-timing.txt: through AVFoundation's default compositor (a layer instruction, as the
 //  export did before FrameCompositor), through FrameCompositor without a board and with a match's board. The three
 //  run in turn, three times, so a busy machine slows them alike. A measurement, not a gate: the limit only catches a hang.
+//  Opt-in (nine minute-long exports would slow every other suite's time limits):
+//    TEST_RUNNER_EXPORT_TIMING=1 make test T=scoreTests/ExportTimingTests
 //
 
 import AVFoundation
@@ -16,7 +18,9 @@ import Testing
 
 @testable import score
 
-@Suite("ExportTiming", .serialized)
+@Suite(
+    "ExportTiming", .serialized,
+    .enabled(if: ProcessInfo.processInfo.environment["EXPORT_TIMING"] != nil, "set TEST_RUNNER_EXPORT_TIMING=1"))
 struct ExportTimingTests {
     @Test("Full export of a 60 s 720p mock is timed on both compositors", .timeLimit(.minutes(5)))
     func timeSixtySecondFullExport() async throws {
