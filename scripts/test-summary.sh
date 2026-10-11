@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Print a one-line pass/fail summary (plus failures) for the last `make test` result bundle.
+# Print a one-line pass/fail summary (plus failures) for the last `make test` result bundle; exits 1 on any failure.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 bundle=${1:-.build/results/test.xcresult}
@@ -14,4 +14,6 @@ print(f"{d.get('result')}: {d.get('passedTests')} passed, {d.get('failedTests')}
       f"{d.get('skippedTests')} skipped, {d.get('expectedFailures')} expected failures")
 for f in d.get("testFailures", [])[:30]:
     print(f"  ✘ {f.get('testName')}: {f.get('failureText')}")
+# A failed test fails `make test` even if xcodebuild itself exited 0
+sys.exit(1 if (d.get("failedTests") or 0) > 0 or d.get("result") == "Failed" else 0)
 PY
