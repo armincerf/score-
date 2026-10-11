@@ -538,8 +538,10 @@ a new one, so that is harmless.
   (`MatchVideoPlayerTests`). `ScoreAnnouncer` creates its `AVSpeechSynthesizer` on the first announcement for the
   same reason. Never call `AVAudioSession.sharedInstance()` from a test.
 - If `make test` reports "Failed to install or launch the test runner ... No such process" for
-  every test, the simulator is in a bad state (typically after a killed xcodebuild): run
-  `make sim-reset`, or add `-parallel-testing-enabled NO` to the xcodebuild test command.
+  every test, the simulator is in a bad state (after a killed xcodebuild, or an `xcrun simctl erase`: the
+  parallel-testing clone of an erased device could not launch the app in October 2026, and `make sim-reset`,
+  which erases again, did not help). Delete the device (`xcrun simctl delete <udid>`): `scripts/simulator-udid.sh`
+  creates a fresh "iPhone 17 Pro" on the next run. `make test PARALLEL=NO` sidesteps the clone.
 - GitHub's `xcode-27` runner image is a preview; if it disappears, switch CI to
   `macos-26` + `xcode-select`.
 
