@@ -6,7 +6,7 @@
 //  up to date point by point over the whole recording. From 0-0 with game 1's first server, each point lights the
 //  winner's row with the new score for `ReelScoreboardTimeline.celebrationDuration` (cut short when the next point
 //  comes sooner), then shows the score with the next server; after a game's last point the lit final score gives
-//  way to the games box updated, 0-0 and the next game's first server. Pure, so the rules are unit-tested; the
+//  way to the games box updated, 0-0 and the next game's first server (nobody once the match is decided). Pure, so the rules are unit-tested; the
 //  bitmaps are rendered lazily during the export (`ScoreboardOverlaySource`).
 //
 
@@ -20,8 +20,9 @@ nonisolated enum MatchScoreboardTimeline {
     /// wall-clock offsets, mapped into the concatenated video by `recording` (a point in a gap shows when the
     /// footage resumes). Points without a time are left out (logged once); a point whose video time is not after
     /// the board's previous change is shown at that change instead (a point cannot move the board back in time).
+    /// Once a best-of-`bestOf` match is decided the board shows nobody to serve, unless the players kept playing.
     static func cues(
-        match: ReelScoreboardTimeline, recording: RecordingTimeline, videoDuration: Double
+        match: ReelScoreboardTimeline, recording: RecordingTimeline, videoDuration: Double, bestOf: Int = 5
     ) -> [ReelScoreboardCue] {
         guard videoDuration > 0 else { return [] }
         var changes = Changes()
@@ -60,9 +61,8 @@ nonisolated enum MatchScoreboardTimeline {
             // The next game starts at 0-0 once the final point's celebration is over; a game without timed points
             // only moves the games box, at the board's latest change
             let next = timed.isEmpty ? changes.lastTime : lastPoint + ReelScoreboardTimeline.celebrationDuration
-            changes.set(
-                at: next,
-                state: board(match, games: gamesWon, points: (0, 0), server: firstServer(match, game: number + 1)))
+            let server = serverOfGame(after: number, match, gamesWon: gamesWon, bestOf: bestOf)
+            changes.set(at: next, state: board(match, games: gamesWon, points: (0, 0), server: server))
         }
         if untimed > 0 {
             Log.video.warning("Match scoreboard: \(untimed) point(s) without a video time left out")
@@ -85,6 +85,20 @@ nonisolated enum MatchScoreboardTimeline {
     /// Who serves first in game `number`, or nil when there is no such game or it has no first server.
     private static func firstServer(_ match: ReelScoreboardTimeline, game number: Int) -> Int? {
         match.game(number: number)?.firstServer
+    }
+
+    /// Who serves first in the game after game `number`, once the games stand at `gamesWon`: nobody when those games
+    /// decide the match and no later game has a point (the app moves the first server on after every game, the
+    /// deciding one included, so the state always names one); a match ended early, or played on after it was
+    /// decided, shows the next game's server.
+    private static func serverOfGame(
+        after number: Int, _ match: ReelScoreboardTimeline, gamesWon: (one: Int, two: Int), bestOf: Int
+    ) -> Int? {
+        let decided =
+            ScoreAnnouncementUtils.checkMatchWon(
+                playerOneGames: gamesWon.one, playerTwoGames: gamesWon.two, bestOf: bestOf) != nil
+        let playedOn = !(match.game(number: number + 1)?.points.isEmpty ?? true)
+        return decided && !playedOn ? nil : firstServer(match, game: number + 1)
     }
 
     /// The board's changes in time order. Setting a change drops any later one already set (a point that comes

@@ -142,7 +142,7 @@ struct MatchScoreboardTimelineTests {
         #expect(spans.last?.state == Self.state(games: (1, 0), 0, 1, server: 2))
     }
 
-    @Test("After the last game of a finished match the board shows the games and nobody to serve")
+    @Test("After the last game, with no next game's server known, the board shows the games and nobody to serve")
     func matchOver() throws {
         let game = GameResult(
             playerOneScore: 0, playerTwoScore: 2, winner: 2, points: Self.points([(2, 1), (2, 2)]), firstServer: 2)
@@ -152,6 +152,48 @@ struct MatchScoreboardTimelineTests {
         #expect(spans.first?.state == Self.state(0, 0, server: 2), "game 1's first server from the start")
         #expect(spans.last?.state == Self.state(games: (0, 1), 0, 0, server: nil))
         #expect(Self.near(spans.last?.start ?? 0, 3.2))
+    }
+
+    /// Three games of two points each, all won by `winners[n]`, game n's points at 10n + 1 and 10n + 2 s; first
+    /// servers alternate from player 1.
+    private static func games(won winners: [Int]) -> [GameResult] {
+        winners.enumerated().map { number, winner in
+            let start = Double(number * 10)
+            return GameResult(
+                playerOneScore: winner == 1 ? 2 : 0, playerTwoScore: winner == 2 ? 2 : 0, winner: winner,
+                points: points([(winner, start + 1), (winner, start + 2)]), firstServer: number % 2 + 1)
+        }
+    }
+
+    @Test("Once the games decide the match nobody serves, though the state names the next game's server")
+    func decidedMatchHasNoServer() throws {
+        // As the app leaves it: the first server moved on after the deciding game too
+        let match = Self.match(games: Self.games(won: [1, 1, 1]), current: [], currentFirstServer: 2)
+        let spans = Self.spans(
+            MatchScoreboardTimeline.cues(match: match, recording: Self.recording(40), videoDuration: 40))
+        let last = try #require(spans.last)
+        #expect(last.state == Self.state(games: (3, 0), 0, 0, server: nil))
+        #expect(Self.near(last.start, 23.2), "after the deciding point's celebration")
+        #expect(spans.allSatisfy { $0.state.server != nil || $0.state.pointWonBy != nil || $0.start >= 23.2 })
+    }
+
+    @Test("A match ended before it is decided shows the next game's server")
+    func undecidedMatchKeepsTheServer() throws {
+        let match = Self.match(games: Self.games(won: [1, 2, 1]), current: [], currentFirstServer: 2)
+        let spans = Self.spans(
+            MatchScoreboardTimeline.cues(match: match, recording: Self.recording(40), videoDuration: 40))
+        #expect(spans.last?.state == Self.state(games: (2, 1), 0, 0, server: 2))
+    }
+
+    @Test("Played on after the match was decided, the next game has its server")
+    func playedOnAfterTheMatch() throws {
+        let match = Self.match(
+            games: Self.games(won: [2, 2, 2]), current: Self.points([(1, 35)]), currentFirstServer: 2)
+        let spans = Self.spans(
+            MatchScoreboardTimeline.cues(match: match, recording: Self.recording(40), videoDuration: 40))
+        let between = try #require(spans.first { Self.near($0.start, 23.2) })
+        #expect(between.state == Self.state(games: (0, 3), 0, 0, server: 2))
+        #expect(spans.last?.state == Self.state(games: (0, 3), 1, 0, server: 2))
     }
 
     @Test("A finished game without timed points still moves the games box")
