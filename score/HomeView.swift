@@ -20,6 +20,9 @@ struct HomeView: View {
     @State private var player2Name = ""
     @State private var isFinishingMatch = false
     @State private var showingSaveFailedAlert = false
+    #if DEBUG
+        @State private var showingLatestMatch = false  // -openLatestMatch screenshot hook, see DebugSeed
+    #endif
 
     private var preferencesService: UserPreferencesService {
         UserPreferencesService(modelContext: modelContext)
@@ -55,11 +58,26 @@ struct HomeView: View {
             .navigationDestination(isPresented: $showingGame) {
                 GameView()
             }
+            #if DEBUG
+                .navigationDestination(isPresented: $showingLatestMatch) {
+                    // The newest match, opened as its recent row opens it
+                    let history = connectivity.scoreState.matchHistory
+                    if let match = history.last {
+                        MatchDetailView(match: match, matchNumber: history.count, allMatches: history)
+                    }
+                }
+            #endif
             .onAppear {
                 #if DEBUG
                     if DebugSeed.showsNewMatchSheet, !showingNameSheet {  // screenshot hook, see DebugSeed
                         prepareMatchName()
                         showingNameSheet = true
+                    }
+                    if DebugSeed.takeOpenLatestMatchRequest() {  // screenshot hook: after the -seedReel export
+                        Task {
+                            await DebugSeed.reelExport?.value
+                            showingLatestMatch = true
+                        }
                     }
                 #endif
             }

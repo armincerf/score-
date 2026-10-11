@@ -62,8 +62,9 @@ score/                      iOS app target
   VideoRotationCorrection.swift Extra clockwise turn a segment needs beyond its metadata (transform, EXIF orientation) + OrientationDecision
   VideoOrientationDetector.swift Samples frames, scores upright people per orientation with Vision body pose, decides; BodyPoseEvidence
   AudioSessionCoordinator.swift Owns AVAudioSession for a match (play-and-record to speaker; released at match end)
-  MediaExportService.swift    Concatenates segments upright (per-track preferredTransform) + cuts the reel; export(to:as:) with progress
+  MediaExportService.swift    Concatenates segments upright (per-track preferredTransform) + cuts the reel (scoreboard burned in); export(to:as:) with progress
   ReelScoreboard.swift        Broadcast-style scoreboard for the reel: state, pixel layout per video size, SwiftUI view, ImageRenderer
+  ReelScoreboardTimeline.swift Pure: match data + reel clips -> board states with reel-time ranges (score at clip start, celebration)
   ReelOverlayComposer.swift   Burns time-ranged bitmaps (the scoreboard) into a video composition per frame with Core Image
   MockVideoGenerator.swift    Synthetic video for the simulator (no camera)
   VideoTransferable.swift     ShareLink/Transferable wrapper for exported videos
@@ -200,6 +201,8 @@ make screenshot OUT=.build/shots/home-dark.png DARK=1 NO_BUILD=1 ARGS="-seedSamp
 make screenshot OUT=.build/shots/sheet.png NO_BUILD=1 ARGS="-seedSampleMatches -showNewMatchSheet"
 make screenshot OUT=.build/shots/home-ax.png NO_BUILD=1 \
   ARGS="-seedSampleMatches -UIPreferredContentSizeCategoryName UICTContentSizeCategoryAccessibilityL"
+# the newest match's detail screen with a real exported reel (mock footage + scoreboard); --wait covers the export
+scripts/screenshot.sh --wait 15 --args "-seedSampleMatches -seedReel -openLatestMatch" .build/shots/reel-detail.png
 ```
 
 - Launch arguments are read by `score/DebugSeed.swift` (DEBUG builds only): `-seedEmpty` removes
@@ -207,8 +210,14 @@ make screenshot OUT=.build/shots/home-ax.png NO_BUILD=1 \
   replaces every stored match with six finished Alex vs Lucio matches (one with no winner, each with
   points, highlights and game events); `-seedActiveMatch` adds a live match 14 minutes in (1-0 in
   games, 5-3 in game two), so the home screen shows its resume state; `-showNewMatchSheet` opens the
-  new-match sheet on the home screen. The seed wipes the simulator's store: only ever pass it to
-  `simctl`, never to a device. `-UIPreferredContentSizeCategoryName <UICTContentSizeCategory...>`
+  new-match sheet on the home screen; `-seedReel` (with `-seedSampleMatches`) writes a 20 s mock recording
+  as the newest match's full video and runs the real highlight reel export with the scoreboard (four 4.5 s
+  clips scored from that match's highlights); `-openLatestMatch` opens the newest match's detail screen once
+  that export has finished (about 2 s on the simulator). The reel player sits below the fold of the detail
+  screen: scroll it into view before capturing, e.g. `xcodebuildmcp ui-automation snapshot-ui --simulator-id
+  <udid>`, then `ui-automation swipe --within-element-ref <scroll ref> --direction up --distance 0.45` and
+  `xcrun simctl io <udid> screenshot out.png`. The seed wipes the simulator's store and its videos: only ever
+  pass it to `simctl`, never to a device. `-UIPreferredContentSizeCategoryName <UICTContentSizeCategory...>`
   is UIKit's own Dynamic Type override; check at least `AccessibilityL` for truncation.
 - `scripts/screenshot.sh --udid <UDID> --no-build --wait 5 out.png` targets another simulator or
   reuses the last build; `--wait` lengthens the launch-to-capture delay for slow screens.
@@ -233,13 +242,28 @@ make screenshot OUT=.build/shots/home-ax.png NO_BUILD=1 \
   time, so it works for export and playback and is testable. Do not switch it to
   `AVVideoCompositionCoreAnimationTool` (export-only, begin-time quirks, custom layers never drawn).
 - The board is SwiftUI (`ReelScoreboardView`, previewable) rasterised once per state with
-  `ImageRenderer` at the pixel size `ReelScoreboardLayout` derives from the video height, on the main
-  actor, before the export starts.
-- `scoreTests/ReelOverlayTests` is the proof: it exports a 4 s mock video with two cues and checks
-  pixels of frames read back from the file. `make test` sets `REEL_FRAMES_DIR` so the frames and the
-  board land in `.build/shots/reel/` (`board.png`, `reel-1s.png`, `reel-3s.png`, `reel-3.9s.png`); look at
-  them with the Read tool whenever the board or the composer changes. When sampling pixels in tests,
-  avoid glyphs (the digits are black on the gold box): sample corners or compare regions.
+  `ImageRenderer` at the pixel size `ReelScoreboardLayout` derives from the video's short side, on the main
+  actor, before the export starts (`MediaExportService.scoreboardOverlays`; identical states share a bitmap).
+- What the board shows is pure: `ReelScoreboardTimeline` turns the match (`scoreState`) and the reel's clips
+  (each `HighlightClip` with its reel duration, in reel order) into `ReelScoreboardCue`s: the score as the
+  clip starts (points with `videoTimestamp <= clip start`), who serves, and for attributed clips of 3 s or more
+  the winner's row lit for the last 1.2 s. `WatchConnectivityManager.exportHighlightReel` passes the rendered
+  cues to `MediaExportService.exportHighlightReel(..., scoreboard:)`.
+- A source without sound (every mock video; a recording made without microphone access) leaves
+  `makeComposition`'s audio track empty, and an empty track fails the export (AVError -11838) with or without
+  the board, so `makeComposition` drops it: this covers the full video and the reel (`ReelManagerExportTests`
+  and `VideoOrientationIntegrationTests` check both). The board is only drawn over a
+  source stored upright (identity `preferredTransform`, as the exported full video is); otherwise the plain
+  reel is exported and a warning logged. Keep an `AVURLAsset` alive while using its tracks (a track does not
+  retain its asset; inserting a track of a released asset fails with -11800/-12780).
+- Proof, all on exported frames: `scoreTests/ReelOverlayTests` (the composer: a 4 s mock with two cues),
+  `ReelExportTests` (the real reel: a fabricated two-game match, two clips, frames at 1.0/2.5/4.0/6.5 s;
+  plus sound, rotated and cue-less sources and the 1080p/4K/portrait layouts), `ReelManagerExportTests`
+  (through `exportMatchVideos()`) and `ReelScoreboardTimelineTests` (the rules). `make test` sets
+  `REEL_FRAMES_DIR` so frames land in `.build/shots/reel/` (`board.png`, `reel-*.png`, `scoreboard-reel-*.png`,
+  `board-1080p.png`, `manager-reel-*.png`, ...); look at them with the Read tool whenever the board or the
+  composer changes. When sampling pixels in tests, avoid glyphs (the digits are black on the gold box):
+  sample corners or compare regions. Shared helpers: `scoreTests/ReelFrameSupport.swift`.
 - Design and remaining work: `docs/plans/highlight-reel.md`.
 
 ## Icon

@@ -4,7 +4,7 @@
 //
 //  End-to-end proof that the reel scoreboard is burned into exported frames: a synthetic video is exported
 //  through ReelOverlayComposer and frames are read back out of the exported file and checked pixel by pixel.
-//  The frames are also written as PNGs (see `outputDirectory`) so a person can look at them.
+//  The frames are also written as PNGs (see `ReelFrames.outputDirectory`) so a person can look at them.
 //
 
 import AVFoundation
@@ -22,38 +22,18 @@ import os
 struct ReelOverlayTests {
     private static let videoSize = CGSize(width: 1280, height: 720)
 
-    /// Where the exported movie and the inspected frames are written: `REEL_FRAMES_DIR` (make test sets it to
-    /// .build/shots/reel on the Mac, because xcodebuild runs tests in a throwaway simulator clone) or tmp.
-    private static var outputDirectory: URL {
-        if let path = ProcessInfo.processInfo.environment["REEL_FRAMES_DIR"], !path.isEmpty {
-            return URL(fileURLWithPath: path, isDirectory: true)
-        }
-        // The simulator can write to the Mac's filesystem: land next to the repo's other screenshots
-        let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-        return repo.appendingPathComponent(".build/shots/reel", isDirectory: true)
-    }
-
-    private static func describe(_ image: CGImage) -> String {
-        let space = image.colorSpace.flatMap { $0.name as String? } ?? "nil"
-        return "\(image.width)x\(image.height) bpc=\(image.bitsPerComponent) bpp=\(image.bitsPerPixel) "
-            + "info=\(image.bitmapInfo.rawValue) alpha=\(image.alphaInfo.rawValue) space=\(space)"
-    }
-
     @Test("ImageRenderer produces colour on this runtime (sanity check for the board render)")
     func imageRendererProducesColour() throws {
         let renderer = ImageRenderer(content: Color.red.frame(width: 20, height: 20))
         renderer.scale = 1
         let image = try #require(renderer.cgImage)
-        let pixels = Pixels(image)
+        let pixels = ReelPixels(image)
         let centre = pixels.rgb(at: CGPoint(x: 10, y: 10))
         #expect(
-            centre.r > 200 && centre.g < 80 && centre.b < 80, "expected red, got \(centre); \(Self.describe(image))")
-        try FileManager.default.createDirectory(at: Self.outputDirectory, withIntermediateDirectories: true)
-        try Self.savePNG(image, name: "red", in: Self.outputDirectory)
-    }
-
-    private static func seconds(_ value: Double) -> CMTime {
-        CMTime(seconds: value, preferredTimescale: 600)
+            centre.r > 200 && centre.g < 80 && centre.b < 80,
+            "expected red, got \(centre); \(ReelFrames.describe(image))")
+        try FileManager.default.createDirectory(at: ReelFrames.outputDirectory, withIntermediateDirectories: true)
+        try ReelFrames.savePNG(image, name: "red", in: ReelFrames.outputDirectory)
     }
 
     private static func state(
@@ -72,9 +52,9 @@ struct ReelOverlayTests {
         let image = try #require(ReelScoreboardRenderer.render(Self.state(points: 5, 3, server: 1), layout: layout))
         #expect(CGFloat(image.width) == layout.panelSize.width)
         #expect(CGFloat(image.height) == layout.panelSize.height)
-        let pixels = Pixels(image)
-        try FileManager.default.createDirectory(at: Self.outputDirectory, withIntermediateDirectories: true)
-        try Self.savePNG(image, name: "board", in: Self.outputDirectory)
+        let pixels = ReelPixels(image)
+        try FileManager.default.createDirectory(at: ReelFrames.outputDirectory, withIntermediateDirectories: true)
+        try ReelFrames.savePNG(image, name: "board", in: ReelFrames.outputDirectory)
         // A corner of the games box (the black digit sits at its centre) is gold; the chip is player one's blue;
         // the name area is the translucent panel
         let gamesCorner = CGPoint(x: layout.panelWidth - layout.pointsWidth - layout.gamesBoxWidth + 5, y: 5)
@@ -107,10 +87,11 @@ struct ReelOverlayTests {
             ReelScoreboardRenderer.render(state(points: 6, 3, server: 2, pointWonBy: 1), layout: layout))
         let cues = [
             OverlayCue(
-                timeRange: CMTimeRange(start: seconds(0.5), duration: seconds(1.5)), image: before,
+                timeRange: CMTimeRange(start: ReelFrames.seconds(0.5), duration: ReelFrames.seconds(1.5)),
+                image: before,
                 origin: layout.origin),
             OverlayCue(
-                timeRange: CMTimeRange(start: seconds(2), duration: seconds(1.5)), image: after,
+                timeRange: CMTimeRange(start: ReelFrames.seconds(2), duration: ReelFrames.seconds(1.5)), image: after,
                 origin: layout.origin),
         ]
         let asset = AVURLAsset(url: source)
@@ -123,24 +104,24 @@ struct ReelOverlayTests {
 
     @Test("The scoreboard is burned into the exported frames for its cue's time range only", .timeLimit(.minutes(3)))
     func overlayIsBurnedIntoExportedFrames() async throws {
-        let directory = Self.outputDirectory
+        let directory = ReelFrames.outputDirectory
         let export = try await Self.exportSpikeReel(in: directory)
         let layout = export.layout
         let size = Self.videoSize
 
-        let frameBefore = try await Self.frame(of: export.reel, at: 1.0)
-        let frameAfter = try await Self.frame(of: export.reel, at: 3.0)
-        let framePlain = try await Self.frame(of: export.reel, at: 3.9)
-        let sourceFrame = try await Self.frame(of: export.source, at: 1.0)
-        let sourceLate = try await Self.frame(of: export.source, at: 3.9)
+        let frameBefore = try await ReelFrames.frame(of: export.reel, at: 1.0)
+        let frameAfter = try await ReelFrames.frame(of: export.reel, at: 3.0)
+        let framePlain = try await ReelFrames.frame(of: export.reel, at: 3.9)
+        let sourceFrame = try await ReelFrames.frame(of: export.source, at: 1.0)
+        let sourceLate = try await ReelFrames.frame(of: export.source, at: 3.9)
         for (name, image) in [
             ("reel-1s", frameBefore), ("reel-3s", frameAfter), ("reel-3.9s", framePlain), ("source-1s", sourceFrame),
         ] {
-            try Self.savePNG(image, name: name, in: directory)
+            try ReelFrames.savePNG(image, name: name, in: directory)
         }
 
-        let exported = Pixels(frameBefore)
-        let original = Pixels(sourceFrame)
+        let exported = ReelPixels(frameBefore)
+        let original = ReelPixels(sourceFrame)
         #expect(exported.width == Int(size.width) && exported.height == Int(size.height))
 
         // Inside the panel: gold games box (sampled off the digit) and the two player chips
@@ -158,7 +139,7 @@ struct ReelOverlayTests {
         #expect(exported.distance(to: original, at: abovePanel) < 40, "just above the panel should match the source")
 
         // Between the cues the second board shows a different points cell and the same chip
-        let later = Pixels(frameAfter)
+        let later = ReelPixels(frameAfter)
         #expect(
             exported.meanDifference(to: later, in: layout.pointsCell(row: 0, in: size)) > 4,
             "player one's points cell should change from 5 to 6")
@@ -168,87 +149,8 @@ struct ReelOverlayTests {
 
         // After the last cue the panel is gone: that region matches the plain source
         #expect(
-            Pixels(framePlain).meanDifference(to: Pixels(sourceLate), in: layout.panelFrame(in: size)) < 12,
+            ReelPixels(framePlain).meanDifference(to: ReelPixels(sourceLate), in: layout.panelFrame(in: size)) < 12,
             "no overlay should be drawn after the last cue")
-    }
-
-    // MARK: - Helpers
-
-    private static func frame(of url: URL, at seconds: Double) async throws -> CGImage {
-        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
-        generator.requestedTimeToleranceBefore = .zero
-        generator.requestedTimeToleranceAfter = .zero
-        generator.appliesPreferredTrackTransform = true
-        return try await generator.image(at: Self.seconds(seconds)).image
-    }
-
-    private static func savePNG(_ image: CGImage, name: String, in directory: URL) throws {
-        let data = try #require(UIImage(cgImage: image).pngData(), "PNG encoding failed for \(describe(image))")
-        try data.write(to: directory.appendingPathComponent("\(name).png"))
-    }
-}
-
-// MARK: - Pixel access
-
-/// RGBA bytes of a CGImage, in top-left coordinates.
-private struct Pixels {
-    let width: Int
-    let height: Int
-    private let bytes: [UInt8]
-
-    init(_ image: CGImage) {
-        let imageWidth = image.width
-        let imageHeight = image.height
-        width = imageWidth
-        height = imageHeight
-        var buffer = [UInt8](repeating: 0, count: imageWidth * imageHeight * 4)
-        buffer.withUnsafeMutableBytes { raw in
-            guard
-                let context = CGContext(
-                    data: raw.baseAddress, width: imageWidth, height: imageHeight, bitsPerComponent: 8,
-                    bytesPerRow: imageWidth * 4, space: CGColorSpaceCreateDeviceRGB(),
-                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
-            else { return }
-            context.draw(image, in: CGRect(x: 0, y: 0, width: imageWidth, height: imageHeight))
-        }
-        bytes = buffer
-    }
-
-    func rgb(at point: CGPoint) -> (r: Int, g: Int, b: Int) {
-        let x = min(max(Int(point.x), 0), width - 1)
-        let y = min(max(Int(point.y), 0), height - 1)
-        let index = (y * width + x) * 4
-        return (Int(bytes[index]), Int(bytes[index + 1]), Int(bytes[index + 2]))
-    }
-
-    func alpha(at point: CGPoint) -> Int {
-        let x = min(max(Int(point.x), 0), width - 1)
-        let y = min(max(Int(point.y), 0), height - 1)
-        return Int(bytes[(y * width + x) * 4 + 3])
-    }
-
-    /// Manhattan distance between the two images' colours at one point.
-    func distance(to other: Pixels, at point: CGPoint) -> Int {
-        let mine = rgb(at: point)
-        let theirs = other.rgb(at: point)
-        return abs(mine.r - theirs.r) + abs(mine.g - theirs.g) + abs(mine.b - theirs.b)
-    }
-
-    /// Mean per-channel absolute difference over a rectangle (sampled every 2 px).
-    func meanDifference(to other: Pixels, in rect: CGRect) -> Double {
-        var total = 0
-        var count = 0
-        var y = Int(rect.minY)
-        while y < Int(rect.maxY) {
-            var x = Int(rect.minX)
-            while x < Int(rect.maxX) {
-                total += distance(to: other, at: CGPoint(x: x, y: y))
-                count += 3
-                x += 2
-            }
-            y += 2
-        }
-        return count == 0 ? 0 : Double(total) / Double(count)
     }
 }
 

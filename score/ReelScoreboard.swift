@@ -11,7 +11,7 @@ import CoreGraphics
 import SwiftUI
 
 /// What the scoreboard shows during one stretch of the reel.
-nonisolated struct ReelScoreboardState: Equatable, Sendable {
+nonisolated struct ReelScoreboardState: Hashable, Sendable {
     let playerOneName: String
     let playerTwoName: String
     let playerOneGames: Int
@@ -24,14 +24,15 @@ nonisolated struct ReelScoreboardState: Equatable, Sendable {
     let pointWonBy: Int?
 }
 
-/// Pixel geometry of the scoreboard for a video size. Everything scales with the video height, so the
-/// board looks the same at 720p, 1080p and 4K. Sizes are in pixels (the board is rendered at scale 1).
+/// Pixel geometry of the scoreboard for a video size. Everything scales with the video's short side (the
+/// height of landscape footage), so the board looks the same at 720p, 1080p and 4K and still fits across a
+/// portrait frame. Sizes are in pixels (the board is rendered at scale 1).
 nonisolated struct ReelScoreboardLayout: Equatable, Sendable {
     /// 1 at 720p.
     let unit: CGFloat
 
     init(videoSize: CGSize) {
-        unit = max(videoSize.height, 1) / 720
+        unit = max(min(videoSize.width, videoSize.height), 1) / 720
     }
 
     var rowHeight: CGFloat { 42 * unit }
@@ -45,7 +46,7 @@ nonisolated struct ReelScoreboardLayout: Equatable, Sendable {
     var padding: CGFloat { 12 * unit }
     var nameFontSize: CGFloat { 21 * unit }
     var numberFontSize: CGFloat { 24 * unit }
-    var serveMarkerSize: CGFloat { 12 * unit }
+    var serveMarkerSize: CGFloat { 14 * unit }
     var gamesBoxWidth: CGFloat { 46 * unit }
     var pointsWidth: CGFloat { 54 * unit }
 
@@ -80,6 +81,14 @@ nonisolated struct ReelScoreboardLayout: Equatable, Sendable {
         return CGRect(x: rowRect.maxX - pointsWidth, y: rowRect.minY, width: pointsWidth, height: rowHeight)
     }
 
+    /// Where a row's serve marker sits (just left of the games box), in top-left image coordinates.
+    func serveMarkerSlot(row: Int, in videoSize: CGSize) -> CGRect {
+        let box = gamesBox(row: row, in: videoSize)
+        return CGRect(
+            x: box.minX - padding - serveMarkerSize, y: box.midY - serveMarkerSize / 2, width: serveMarkerSize,
+            height: serveMarkerSize)
+    }
+
     /// The colour chip of a row, in top-left image coordinates.
     func chip(row: Int, in videoSize: CGSize) -> CGRect {
         let rowRect = rowFrame(row, in: videoSize)
@@ -93,7 +102,7 @@ enum ReelScoreboardStyle {
     static let gold = Color(red: 0.98, green: 0.76, blue: 0.2)
     static let playerOne = Color(red: 0.2, green: 0.55, blue: 1.0)
     static let playerTwo = Color(red: 1.0, green: 0.3, blue: 0.3)
-    static let highlight = Color.white.opacity(0.16)
+    static let highlight = Color.white.opacity(0.22)
     static let separator = Color.white.opacity(0.18)
 }
 
@@ -157,11 +166,13 @@ struct ReelScoreboardRow: View {
                 .foregroundStyle(.black)
                 .frame(width: layout.gamesBoxWidth, height: layout.rowHeight)
                 .background(ReelScoreboardStyle.gold)
+            // The point just won flashes: the winner's points cell turns white
             Text(points, format: .number)
                 .font(.system(size: layout.numberFontSize, weight: .bold))
                 .monospacedDigit()
-                .foregroundStyle(.white)
+                .foregroundStyle(wonPoint ? .black : .white)
                 .frame(width: layout.pointsWidth, height: layout.rowHeight)
+                .background(wonPoint ? Color.white : Color.clear)
         }
         .frame(height: layout.rowHeight)
         .background(wonPoint ? ReelScoreboardStyle.highlight : Color.clear)
@@ -184,6 +195,17 @@ enum ReelScoreboardRenderer {
         state: ReelScoreboardState(
             playerOneName: "Alex", playerTwoName: "Lucio", playerOneGames: 1, playerTwoGames: 0,
             playerOnePoints: 5, playerTwoPoints: 3, server: 1, pointWonBy: nil),
+        layout: ReelScoreboardLayout(videoSize: CGSize(width: 1280, height: 720))
+    )
+    .padding()
+    .background(.gray)
+}
+
+#Preview("720p, player two has just won the point") {
+    ReelScoreboardView(
+        state: ReelScoreboardState(
+            playerOneName: "Alex", playerTwoName: "Lucio", playerOneGames: 1, playerTwoGames: 1,
+            playerOnePoints: 10, playerTwoPoints: 11, server: 2, pointWonBy: 2),
         layout: ReelScoreboardLayout(videoSize: CGSize(width: 1280, height: 720))
     )
     .padding()

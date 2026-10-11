@@ -9,8 +9,10 @@
 //
 
 import AVFoundation
+import CoreGraphics
 import CoreMedia
 import Foundation
+import os
 
 enum MediaExportService {
     // MARK: - Export Quality
@@ -105,11 +107,13 @@ enum MediaExportService {
 
     // MARK: - Highlight Reel Export
 
-    /// Cuts `clips` (times in `source`'s time base) out of `source` into one reel, in order.
+    /// Cuts `clips` (times in `source`'s time base) out of `source` into one reel, in order. `scoreboard` cues
+    /// (reel-time ranges and bitmaps, see `scoreboardOverlays`) are burned into the frames; empty = a plain reel.
     static func exportHighlightReel(
         from source: URL,
         to outputURL: URL,
         clips: [HighlightClipInfo],
+        scoreboard: [OverlayCue] = [],
         quality: ExportQuality = .hd720p,
         progressHandler: @escaping ProgressHandler = { _ in }
     ) async throws -> ExportResult {
@@ -121,11 +125,71 @@ enum MediaExportService {
         let timeRanges = clipTimeRanges(for: clips, assetDuration: durationSeconds)
         guard !timeRanges.isEmpty else { throw ExportError.noClips }
 
-        let built = try await makeComposition(clips: timeRanges.map { (source, $0) })
+        var built = try await makeComposition(clips: timeRanges.map { (source, $0) })
+        if !scoreboard.isEmpty {
+            built = try await withScoreboard(scoreboard, on: built, source: asset)
+        }
         try await exportComposition(built, to: outputURL, quality: quality, progressHandler: progressHandler)
 
         let totalDuration = timeRanges.reduce(0) { $0 + CMTimeGetSeconds($1.duration) }
         return ExportResult(outputURL: outputURL, duration: totalDuration, fileSize: fileSize(at: outputURL))
+    }
+
+    /// Renders each distinct board state once, sized for a `videoSize` frame (the reel's upright size), and pairs
+    /// the bitmaps with the cues' reel-time ranges. A state that fails to render is left out (and logged).
+    static func scoreboardOverlays(_ cues: [ReelScoreboardCue], videoSize: CGSize) -> [OverlayCue] {
+        let layout = ReelScoreboardLayout(videoSize: videoSize)
+        var rendered: [ReelScoreboardState: CGImage] = [:]
+        return cues.compactMap { cue in
+            if rendered[cue.state] == nil {
+                rendered[cue.state] = ReelScoreboardRenderer.render(cue.state, layout: layout)
+            }
+            guard let image = rendered[cue.state] else {
+                Log.video.error("Reel scoreboard: a board state failed to render")
+                return nil
+            }
+            return OverlayCue(timeRange: cue.timeRange, image: image, origin: layout.origin)
+        }
+    }
+
+    /// `scoreboardOverlays` sized for a reel cut from `source` (its first video track's upright size).
+    static func scoreboardOverlays(_ cues: [ReelScoreboardCue], forReelFrom source: URL) async throws -> [OverlayCue] {
+        guard !cues.isEmpty else { return [] }
+        let asset = AVURLAsset(url: source)
+        guard let track = try await asset.loadTracks(withMediaType: .video).first else {
+            throw ExportError.noVideoTrackInSource
+        }
+        let (naturalSize, preferredTransform) = try await track.load(.naturalSize, .preferredTransform)
+        extendLifetime(asset)  // a track does not keep its asset alive
+        return scoreboardOverlays(
+            cues, videoSize: uprightGeometry(naturalSize: naturalSize, preferredTransform: preferredTransform).size)
+    }
+
+    /// Swaps the reel's video composition for one that draws the scoreboard over each frame.
+    ///
+    /// The Core Image composition shows the composition track's frames as stored (the track's preferredTransform
+    /// is identity), so the board is only drawn over a source stored upright. The exported full video always is
+    /// (it is rendered through a video composition); a raw camera file kept as the full video after a failed
+    /// export may not be, so such a source keeps the plain reel, rotated upright by makeComposition.
+    private static func withScoreboard(
+        _ scoreboard: [OverlayCue], on built: BuiltComposition, source: AVURLAsset
+    ) async throws -> BuiltComposition {
+        guard let sourceTrack = try await source.loadTracks(withMediaType: .video).first,
+            try await sourceTrack.load(.preferredTransform).isIdentity
+        else {
+            Log.video.warning("Reel scoreboard skipped: the source video is not stored upright")
+            return built
+        }
+        let reelDuration = built.composition.duration
+        let overrun = CMTimeSubtract(scoreboard.map(\.timeRange.end).max() ?? .zero, reelDuration).seconds
+        if overrun > 1.0 / 30 {
+            Log.video.warning("Reel scoreboard runs \(overrun)s past the reel's end: cues may be misaligned")
+        }
+        let videoComposition = try await ReelOverlayComposer.videoComposition(for: built.composition, cues: scoreboard)
+        Log.video.info(
+            "Reel scoreboard: \(scoreboard.count) cue(s) over \(reelDuration.seconds)s, frame \(Int(videoComposition.renderSize.width))x\(Int(videoComposition.renderSize.height)), \(videoComposition.frameDuration.seconds)s per frame"
+        )
+        return BuiltComposition(composition: built.composition, videoComposition: videoComposition)
     }
 
     /// Converts clips to time ranges inside the asset, dropping empty or out-of-range clips.

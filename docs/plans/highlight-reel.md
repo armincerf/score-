@@ -1,7 +1,16 @@
 # Smarter highlight reel: orientation correction and a burned-in scoreboard
 
-Status: in progress (October 2026). Owner: the export pipeline (`MediaExportService`,
-`WatchConnectivityManager.exportMatchVideos`).
+Status: built and proven on the simulator (October 2026); **not yet verified on a phone or on real match
+footage**. Owner: the export pipeline (`MediaExportService`, `WatchConnectivityManager.exportMatchVideos`).
+
+- Goal 1 (orientation): done. `exportMatchVideos` runs `VideoOrientationDetector` on every segment and
+  `exportFullVideo(segments:corrections:)` folds the correction into each segment's transform. Vision's body
+  pose request has no compute device on the simulator, so the Vision path was exercised on the Mac
+  (`scripts/detect-orientation.sh`); the export geometry is proven by simulator tests on exported frames.
+- Goal 2 (scoreboard): done. The real reel export burns the board in (`ReelScoreboardTimeline` ->
+  `MediaExportService.scoreboardOverlays` -> `exportHighlightReel(scoreboard:)`, wired in
+  `WatchConnectivityManager.exportHighlightReel`), proven by `ReelExportTests` on exported frames and visible
+  in the app via `-seedSampleMatches -seedReel -openLatestMatch`.
 
 ## Goals
 
@@ -28,7 +37,7 @@ Animation timing (`AVVideoCompositionCoreAnimationTool` has documented export pi
 quirks, custom layers never drawn, random freezes) and is deterministic to test.
 
 The board itself is SwiftUI (`ReelScoreboardView`), rasterised once per state with `ImageRenderer`
-at the exact pixel size `ReelScoreboardLayout` derives from the video height, so the design is
+at the exact pixel size `ReelScoreboardLayout` derives from the video's short side, so the design is
 previewable and the export only deals in images. Rendering happens on the main actor before the
 export starts (a few images per reel).
 
@@ -38,11 +47,11 @@ export starts (a few images per reel).
 |---|---|
 | `score/ReelScoreboard.swift` | `ReelScoreboardState`, `ReelScoreboardLayout` (pixel geometry per video size), `ReelScoreboardView`, `ReelScoreboardRenderer` |
 | `score/ReelOverlayComposer.swift` | `OverlayCue` (time range + bitmap + origin) and the Core Image video composition |
-| `score/ReelScoreboardTimeline.swift` (to do) | Pure: clips + match data -> the board state(s) for each clip, with reel-time ranges |
-| `score/VideoOrientationDetector.swift` (done) | Samples frames, runs `DetectHumanBodyPoseRequest` at four orientations, scores them (`BodyPoseEvidence`) |
-| `score/VideoRotationCorrection.swift` (done) | The decision (`OrientationDecision.decide`), the correction enum and its transform |
-| `MediaExportService` | `uprightGeometry` gains a correction; `exportHighlightReel` gains scoreboard cues |
-| `WatchConnectivityManager.exportMatchVideos` | Detects per segment before the full export; builds the scoreboard plan for the reel |
+| `score/ReelScoreboardTimeline.swift` | Pure: clips + match data -> the board state(s) for each clip, with reel-time ranges (`ReelScoreboardCue`) |
+| `score/VideoOrientationDetector.swift` | Samples frames, runs `DetectHumanBodyPoseRequest` at four orientations, scores them (`BodyPoseEvidence`) |
+| `score/VideoRotationCorrection.swift` | The decision (`OrientationDecision.decide`), the correction enum and its transform |
+| `MediaExportService` | `uprightGeometry` takes a correction; `exportHighlightReel` takes scoreboard cues; `scoreboardOverlays` renders them |
+| `WatchConnectivityManager` | `exportMatchVideos` detects per segment before the full export; `exportHighlightReel` builds the scoreboard cues for the reel |
 
 ### Scoreboard timeline (pure)
 
@@ -59,7 +68,32 @@ For each clip:
   player's points + 1, `pointWonBy` set, server recomputed.
 - Reel time ranges: cumulative clip durations, in clip order.
 
-### Orientation decision (pure core, Vision around it) — done
+### Scoreboard: as built (and what changed from the plan)
+
+- `ReelScoreboardTimeline(scoreState:)` takes the live match; `cues(for: [ReelClip])` takes each clip's
+  `HighlightClip` (wall clock) and its reel duration (`RecordingTimeline.videoRange` length, which is what
+  `clipTimeRanges` cuts unless the full video is shorter than the timeline; an overrun is logged). Points without
+  a `videoTimestamp` are not counted. A clip whose game is beyond the data shows the games so far, 0-0, no server
+  and no celebration. Times are CMTime at timescale 600, like the composition, so cues line up with the cuts.
+- `MediaExportService.scoreboardOverlays(_:videoSize:)` renders each distinct state once (identical states share a
+  bitmap); `scoreboardOverlays(_:forReelFrom:)` sizes them for the source's upright frame.
+  `exportHighlightReel(..., scoreboard:)` swaps the composition's layer-instruction video composition for
+  `ReelOverlayComposer`'s when cues are given.
+- Found while proving it: **an empty track fails the export** (AVError -11838, MediaValidator -12783 on the iOS 27
+  simulator), with or without the scoreboard. A source without sound (every mock video; a recording made without
+  microphone access) left `makeComposition`'s audio track empty, so every full-video and reel export of silent
+  footage failed and the app fell back to the raw segment with no reel. Both agents hit it; `makeComposition` now
+  drops the empty audio track, which covers the full video and the reel (`ReelManagerExportTests` and
+  `VideoOrientationIntegrationTests` cover both paths).
+- The Core Image composition shows frames as stored, so the board is only drawn over a source stored upright
+  (identity preferredTransform). The exported full video always is; a raw camera file kept as the full video after
+  a failed full export may not be, and then the reel is exported plain (upright, no board) and a warning is logged.
+- Layout scales with the frame's short side, not its height, so the board also fits across portrait footage
+  (unchanged for landscape).
+- Design pass at 720p/1080p: the celebration is now the winner's points cell turned white (black digits) plus a
+  brighter row (white 22 %), and the serve marker is 14 px at 720p (was 12).
+
+### Orientation decision (pure core, Vision around it)
 
 - Candidate orientations: `.up`, `.right` (needs 90° clockwise), `.down` (180°), `.left` (270°).
 - Evidence per orientation: for each sampled frame (30 %, 40 %, 50 %, 60 %, 70 % of the segment; three
@@ -81,8 +115,8 @@ For each clip:
   public-domain photo of a player reaching for the ball, run through the real detector on the Mac,
   Vision also found him in the picture turned a quarter clockwise with the neck slightly "above" the
   root: scores `none=2.14 clockwise90=1.66`, a 1.29x margin, and the same for each turn, so all three
-  turned versions came out `.none` (1 of 4 right, and that one only by default). Weighting by the cosine of the torso's tilt gives `none=2.08 clockwise90=0.51` and
-  12 of 12 right over three photos (below).
+  turned versions came out `.none` (1 of 4 right, and that one only by default). Weighting by the cosine
+  of the torso's tilt gives `none=2.08 clockwise90=0.51` and 12 of 12 right over three photos (below).
 - *Vision is not available on the simulator.* `DetectHumanBodyPoseRequest` throws "No available compute
   device for VNComputeStageMain" on the iOS 27 simulator, with the default device and with the CPU or the
   simulator GPU set explicitly (the legacy `VNDetectHumanBodyPoseRequest` fails too). On the simulator the
@@ -92,10 +126,7 @@ For each clip:
 - *The text-recognition oracle.* The plan's convention test assumed Vision cannot read rotated text; on
   iOS 27 it reads it at every rotation. The test uses where Vision puts the text box instead (a wide box
   in the top-left of its normalized, bottom-left-origin coordinates only with the right orientation).
-- *Silent footage did not export at all.* `makeComposition` always added an audio track; with no audio
-  inserted (the simulator's mock footage, or a recording without microphone access) every full-video and
-  reel export failed with AVFoundation -11838, and the app fell back to the raw segment with no reel. The
-  empty track is now removed before export.
+- *Silent footage did not export at all.* See the empty-track bullet under "Scoreboard: as built".
 
 **Evidence (October 2026)**
 
@@ -112,17 +143,26 @@ For each clip:
 
 ## Verification
 
-- Unit: `OrientationDecision`, `uprightGeometry` with each correction (done, see "Evidence" above), `ReelScoreboardTimeline`
-  (score at clip start across games, deuce serving, pending highlight, short clips without a
-  celebration window, reel-time ranges), layout maths.
-- Integration (simulator, `make test T=scoreTests/ReelOverlayTests` and the detector suite): export a
-  4 s mock video with two cues, read frames at 1 s, 3 s and 3.9 s, check the gold games box, the
-  player chips, an untouched region and that the panel is gone after the last cue; PNGs land in the
-  test host's tmp directory (`xcrun simctl get_app_container <udid> armincerf.score data` + `/tmp/reel-overlay`).
-- Real app: `-seedSampleMatches -seedReel` (to do) generates a mock recording for the newest sample
-  match and runs the real export so `MatchDetailView` plays a reel with the board; `make screenshot`
-  with `-openLatestMatch` (to do) captures it. Real footage is checked on device through TestFlight,
-  with the detector's per-orientation scores in the logs.
+- Unit: `OrientationDecision`, `uprightGeometry` with each correction (see "Evidence" above),
+  `ReelScoreboardTimeline` (score at clip start across games, deuce serving, pending highlight, short
+  clips without a celebration window, reel-time ranges), layout maths.
+- Integration, the composer (`scoreTests/ReelOverlayTests`): export a 4 s mock video with two cues, read
+  frames at 1 s, 3 s and 3.9 s, check the gold games box, the player chips, an untouched region and that
+  the panel is gone after the last cue. `make test` sets `REEL_FRAMES_DIR` so every PNG lands in
+  `.build/shots/reel/`.
+- Integration, the real reel (`scoreTests/ReelExportTests`): a fabricated two-game match, two clips cut from
+  a 12 s mock video through `exportHighlightReel` with the timeline's cues; frames at 1.0, 2.5, 4.0 and 6.5 s of
+  the reel are checked (gold boxes, chips, serve marker row, the lit row, the games digit and points cells
+  changing, the cut matching the source's frame at 7.0 s) and written as `scoreboard-reel-*.png`. The same suite
+  covers a source with sound (the reel keeps it), a source stored rotated (plain upright reel), the plain reel
+  without cues, the board at 1080p and 4K (`board-1080p.png`, `board-2160p.png`) and portrait footage.
+  `ReelManagerExportTests` runs `WatchConnectivityManager.exportMatchVideos()` on a mock recording and checks the
+  board (and the lit point) in the reel it writes (`manager-reel-*.png`).
+- Real app: `-seedSampleMatches -seedReel` writes a 20 s mock recording for the newest sample match and runs
+  the real export (four 4.5 s clips scored from that match's highlights) so `MatchDetailView` plays a reel with the
+  board; `-openLatestMatch` opens it once the export is done (see AGENTS.md, Screenshots).
+- Real footage: checked on device through TestFlight (**not done yet**), with the detector's per-orientation
+  scores in the logs (`Orientation <file>: none=... -> ...`).
 
 ## Non-goals (for now)
 
