@@ -8,8 +8,9 @@
 //    -seedSampleMatches   replace every stored match with six finished sample matches
 //    -seedActiveMatch     add an in-progress match (combine with the above for a full home screen)
 //    -showNewMatchSheet   open the new-match sheet as soon as the home screen appears
-//    -seedReel            with -seedSampleMatches: give the newest match a 20 s mock recording and export its
-//                         highlight reel, scoreboard included, through the real export (a few seconds)
+//    -seedReel            with -seedSampleMatches: record a 20 s mock segment for the newest match and run both
+//                         real exports from it: the full video with the match scoreboard (its first game, rescaled
+//                         into the 20 s) and the highlight reel with the reel scoreboard (a few seconds)
 //    -seedReelPortrait    like -seedReel, but the mock recording is portrait (720x1280), for the player's portrait shape
 //    -openLatestMatch     open the newest match's detail screen (once the -seedReel export, if any, is done)
 //    -landscapeAfter N    turn the interface to landscape N seconds after the home screen first appears (the
@@ -18,6 +19,7 @@
 //
 
 #if DEBUG
+    import CoreMedia
     import Foundation
     import SwiftData
     import UIKit
@@ -141,54 +143,102 @@
         // MARK: - Highlight reel
 
         /// Points the newest finished match at its full video and reel files and starts writing them: a 20 s mock
-        /// recording, then the real reel export with the scoreboard (see `exportReel`).
+        /// recording as the match's raw segment, then the real full export with the match's scoreboard and the real
+        /// reel export with the reel's (see `exportVideos`).
         private static func startReelExport(store: EventStore) throws {
             guard let match = try store.getAllMatches().first(where: { !$0.isActive }) else { return }
             var state = try StateProjector().project(events: store.getEvents(matchId: match.id), matchMetadata: match)
             state.playerOneName = match.playerOneName
             state.playerTwoName = match.playerTwoName
-            let full = VideoStore.fileURL(matchId: match.id, kind: .full)
-            let reel = VideoStore.fileURL(matchId: match.id, kind: .highlights)
+            let files = SeedFiles(
+                raw: VideoStore.fileURL(matchId: match.id, kind: .rawSegment(index: 0)),
+                full: VideoStore.fileURL(matchId: match.id, kind: .full),
+                reel: VideoStore.fileURL(matchId: match.id, kind: .highlights))
             // Referenced before the files exist: history is loaded right after the seed, the export finishes later
-            match.fullVideoURL = VideoStore.storedReference(for: full)
-            match.highlightVideoURL = VideoStore.storedReference(for: reel)
+            match.fullVideoURL = VideoStore.storedReference(for: files.full)
+            match.highlightVideoURL = VideoStore.storedReference(for: files.reel)
             try store.updateMatch(match)
             let highlights = state.highlightClips + (state.pendingHighlight.map { [$0] } ?? [])
             let timeline = ReelScoreboardTimeline(scoreState: state)
-            reelExport = Task { await exportReel(timeline: timeline, highlights: highlights, full: full, reel: reel) }
+            reelExport = Task { await exportVideos(timeline: timeline, highlights: highlights, files: files) }
         }
 
-        /// The match's first four highlights (scored from the match's own points), each cut as 4.5 s of a 20 s mock
-        /// recording (720x1280 with -seedReelPortrait, 1280x720 otherwise): clip k covers 5k to 5k + 4.5 s, long
-        /// enough for the celebration at its end.
-        private static func exportReel(
-            timeline: ReelScoreboardTimeline, highlights: [HighlightClip], full: URL, reel: URL
-        ) async {
+        private struct SeedFiles {
+            let raw: URL
+            let full: URL
+            let reel: URL
+        }
+
+        /// Seconds of mock footage the seed records.
+        private static let mockDuration = 20.0
+
+        /// Writes the 20 s mock recording (720x1280 with -seedReelPortrait, 1280x720 otherwise) as a raw segment and
+        /// exports both videos from it, as the app does at the end of a match: the full video with the match board
+        /// (`fullVideoBoard`), then the reel of the match's first four highlights (scored from the match's own
+        /// points), each cut as 4.5 s of the recording: clip k covers 5k to 5k + 4.5 s, long enough for the
+        /// celebration at its end. The raw segment is removed afterwards.
+        private static func exportVideos(
+            timeline: ReelScoreboardTimeline, highlights: [HighlightClip], files: SeedFiles
+        )
+            async
+        {
             let clock = ContinuousClock()
             let start = clock.now
             let size = seedsPortraitReel ? CGSize(width: 720, height: 1280) : MockVideoGenerator.defaultSize
-            guard let source = await MockVideoGenerator.generateMockVideo(duration: 20, to: full, size: size) else {
+            guard
+                let raw = await MockVideoGenerator.generateMockVideo(duration: mockDuration, to: files.raw, size: size)
+            else {
                 Log.store.error("Debug seed: mock recording failed")
                 return
             }
+            defer { try? FileManager.default.removeItem(at: raw) }
+            do {
+                let board = fullVideoBoard(timeline)
+                let full = try await MediaExportService.exportFullVideo(
+                    segments: [raw], scoreboard: board, to: files.full)
+                Log.store.info("Debug seed: full video \(full.duration)s, \(board.count) scoreboard cues")
+            } catch {
+                Log.store.error("Debug seed: full video export failed: \(error)")
+            }
             let picked = Array(highlights.prefix(4))
             let clipLength = 4.5
-            let clips = picked.enumerated().map { index, highlight in
-                MediaExportService.HighlightClipInfo(
-                    startTimestamp: Double(index) * 5, endTimestamp: Double(index) * 5 + clipLength,
-                    player: highlight.player, gameNumber: highlight.gameNumber)
+            let pieces = picked.indices.map { index in
+                MediaExportService.SourcePiece(
+                    url: raw,
+                    timeRange: CMTimeRange(
+                        start: CMTime(seconds: Double(index) * 5, preferredTimescale: 600),
+                        duration: CMTime(seconds: clipLength, preferredTimescale: 600)))
             }
             let cues = timeline.cues(for: picked.map { ReelClip(highlight: $0, reelDuration: clipLength) })
             do {
-                let overlays = try await MediaExportService.scoreboardOverlays(cues, forReelFrom: source)
                 let result = try await MediaExportService.exportHighlightReel(
-                    from: source, to: reel, clips: clips, scoreboard: overlays)
+                    pieces: pieces, to: files.reel, scoreboard: cues)
                 Log.store.info(
-                    "Debug seed: reel of \(clips.count) clips, \(overlays.count) scoreboard cues, \(result.duration)s, written in \(String(describing: start.duration(to: clock.now)))"
+                    "Debug seed: reel of \(pieces.count) clips, \(cues.count) scoreboard cues, \(result.duration)s, both written in \(String(describing: start.duration(to: clock.now)))"
                 )
             } catch {
                 Log.store.error("Debug seed: reel export failed: \(error)")
             }
+        }
+
+        /// The match board over the mock recording: the match's first game, its points spread evenly from 0.8 s to
+        /// 1.5 s before the end (about one a second), then the games box with game two about to start.
+        private static func fullVideoBoard(_ match: ReelScoreboardTimeline) -> [ReelScoreboardCue] {
+            guard let first = match.games.first else { return [] }
+            let spacing = (mockDuration - 2.3) / Double(max(first.points.count, 1))
+            let points = first.points.enumerated().map { index, point in
+                PointEvent(player: point.player, videoTimestamp: 0.8 + Double(index) * spacing)
+            }
+            let game = GameResult(
+                playerOneScore: first.playerOneScore, playerTwoScore: first.playerTwoScore, winner: first.winner,
+                points: points, firstServer: first.firstServer)
+            let rescaled = ReelScoreboardTimeline(
+                playerOneName: match.playerOneName, playerTwoName: match.playerTwoName, games: [game],
+                currentGameFirstServer: match.games.count > 1 ? match.games[1].firstServer : nil)
+            let recording = RecordingTimeline(segments: [
+                RecordingSegment(fileReference: "seed", startOffset: 0, duration: mockDuration)
+            ])
+            return MatchScoreboardTimeline.cues(match: rescaled, recording: recording, videoDuration: mockDuration)
         }
 
         /// 18:30 today, so sample matches sit at a plausible time of day whatever the current time.

@@ -2,8 +2,9 @@
 //  ReelManagerExportTests.swift
 //  scoreTests
 //
-//  The scoreboard through the app's own export path: WatchConnectivityManager.exportMatchVideos() builds the
-//  timeline from its scoreState, renders the cues and exports the reel. A mock recording stands in for the camera.
+//  The scoreboards through the app's own export path: WatchConnectivityManager.exportMatchVideos() builds the match
+//  cues and the reel's from its scoreState and exports the full video and the reel (cut from the recorded segment).
+//  A mock recording stands in for the camera.
 //
 
 import AVFoundation
@@ -81,6 +82,37 @@ struct ReelManagerExportTests {
         // The last 1.2 s: Ann's points cell turns white (3-1)
         let cell = layout.pointsCell(row: 0, in: size)
         #expect(after.meanBrightness(in: cell) > before.meanBrightness(in: cell) + 80, "Ann's point flashes")
+    }
+
+    @Test("Ending a match exports the full video with the match's scoreboard, point by point", .timeLimit(.minutes(3)))
+    func managerFullVideoCarriesTheScoreboard() async throws {
+        let matchId = try await recordMatch()
+        defer { VideoStore.removeAll(matchId: matchId) }
+
+        let exported = await manager.exportMatchVideos()
+
+        let full = try #require(exported.fullVideo, "the full video is exported")
+        #expect(full == VideoStore.fileURL(matchId: matchId, kind: .full), "not the raw segment")
+        var frames: [Double: ReelPixels] = [:]
+        for time in [0.5, 1.5, 5.0, 7.5] {
+            let image = try await ReelFrames.frame(of: full, at: time)
+            try ReelFrames.savePNG(image, name: "manager-full-\(time)s")
+            frames[time] = ReelPixels(image)
+        }
+        let start = try #require(frames[0.5])
+        let size = CGSize(width: start.width, height: start.height)
+        let layout = ReelScoreboardLayout(videoSize: size)
+        let box = layout.gamesBox(row: 0, in: size)
+        let cell = layout.pointsCell(row: 0, in: size)
+        for (time, frame) in frames {
+            #expect(ReelPixels.isGold(frame.rgb(at: CGPoint(x: box.minX + 5, y: box.minY + 5))), "board at \(time) s")
+        }
+        // 0-0 with Bob to serve; Ann's points at 1 s (1-0) and 7.2 s (3-1) light her cell; at 5 s it is 2-1, unlit
+        let bobMarker = layout.serveMarkerSlot(row: 1, in: size).insetBy(dx: -3, dy: -3)
+        #expect(start.count(in: bobMarker, where: ReelPixels.isGold) > 8, "Bob serves first")
+        #expect(try #require(frames[1.5]).medianBrightness(in: cell) > 200, "Ann's first point lit")
+        #expect(try #require(frames[5.0]).medianBrightness(in: cell) < 60, "settled between points")
+        #expect(try #require(frames[7.5]).medianBrightness(in: cell) > 200, "Ann's point at 7.2 s lit")
     }
 
     /// Regression: makeComposition used to add an audio track that stayed empty for a recording without sound,
