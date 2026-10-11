@@ -99,6 +99,26 @@ For each clip:
   (unchanged for landscape).
 - Design pass at 720p/1080p: the celebration is now the winner's points cell turned white (black digits) plus a
   brighter row (white 22 %), and the serve marker is 14 px at 720p (was 12).
+- Type for phone viewing (review finding): at 720p the names were 21 px and the digits 24 px, about 5 pt of text
+  in MatchDetailView's inline player (about 340 pt wide) or a landscape clip watched on an upright phone. Rows,
+  type, serve marker, games box and points cell are now about 1.2x (720p: rows 50 px, digits 29 px, names 25 px,
+  serve marker 17 px, games 55 px, points 65 px), the chip 9 px (was 7) so it reads as a block; the panel stays
+  440 px wide with 32 px margins, so it covers only 16 px more of the picture's height (101 px panel, was 85). `panelWidth`
+  is capped at the short side less both margins (a guard: with these numbers it never binds, the panel is
+  440 of 656 px). Names are heavy *condensed* capitals: compared on renders, standard width put
+  'Christopher Featherstonehaugh' at the 0.6 floor (and the row guard shrank it further), while condensed keeps it
+  at about 18 px and fits 'Lucio D'Alessandro' at full size. In the app (`-seedSampleMatches -seedReel
+  -openLatestMatch`, iPhone 17 Pro simulator, inline player 1012 px wide) a games box measured 35 x 33 device px
+  before and 42 x 40 after, so names are now about 6.6 pt (were 5.5) and digits 7.7 pt (were 6.3), with the panel's
+  right edge where it was. 1.5x was not tried; the final size wants a look at real footage.
+- One name size for both rows (review finding): each row used to shrink its own name (`minimumScaleFactor`), so a
+  long name sat smaller and on a different baseline than a short one. `ReelScoreboardView.nameFontSize` measures
+  both capitalised names with the drawing font and `ReelScoreboardLayout.sharedNameFontSize` scales both until the
+  wider fits `nameColumnWidth` (`sharedNameScale`, floor 0.6). The first pass alone was not enough: SF tracks
+  smaller sizes more loosely, so the long name measured 261.5 px at 18 px in a 258 px column and the row guard
+  shrank only that row (name tops 20 vs 18 px); it now re-measures until it fits. The serve marker sits in a
+  fixed-width slot so the column is exact. `ReelScoreboardLayoutTests` checks the maths and, on renders, equal cap
+  heights and baselines in both rows.
 
 ### Orientation decision (pure core, Vision around it)
 
