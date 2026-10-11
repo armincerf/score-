@@ -2,9 +2,9 @@
 //  ReelScoreboard.swift
 //  score
 //
-//  Broadcast-style scoreboard burned into the highlight reel: both players, games, points and who serves,
+//  Broadcast-style scoreboard burned into the highlight reel and the full match video: both players, games, points and who serves,
 //  as a lower-third panel. Rendered to a bitmap with ImageRenderer and composited over the video frames by
-//  ReelOverlayComposer, so the design lives in SwiftUI (previewable) and the export only deals in images.
+//  FrameCompositor, so the design lives in SwiftUI (previewable) and the export only deals in images.
 //
 
 import CoreGraphics

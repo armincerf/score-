@@ -5,8 +5,8 @@
 //  What the highlight reel's scoreboard shows, and when. For each clip of the reel (in reel order) the board
 //  shows the score as the rally starts and, when the clip is long enough and the game recorded the rally's point
 //  for the highlight's player, the winner's row lit with the new score for the clip's last 1.2 s. Pure, so the
-//  rules are unit-tested; the bitmaps are rendered from these states (`MediaExportService.scoreboardOverlays`)
-//  before the export starts.
+//  rules are unit-tested; the bitmaps are rendered from these states as the export reaches them
+//  (`ScoreboardOverlaySource`). The full match video's board is `MatchScoreboardTimeline`.
 //
 
 import CoreMedia
