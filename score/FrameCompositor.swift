@@ -87,7 +87,6 @@ nonisolated final class FrameCompositor: NSObject, AVVideoCompositing, Sendable 
 
     enum CompositorError: Error {
         case unexpectedInstruction
-        case missingSourceFrame
     }
 
     func renderContextChanged(_ newRenderContext: AVVideoCompositionRenderContext) {}
@@ -97,15 +96,7 @@ nonisolated final class FrameCompositor: NSObject, AVVideoCompositing, Sendable 
             request.finish(with: CompositorError.unexpectedInstruction)
             return
         }
-        guard let source = request.sourceReadOnlyPixelBuffer(byTrackID: instruction.trackID) else {
-            request.finish(with: CompositorError.missingSourceFrame)
-            return
-        }
-        // The image keeps the source buffer alive until the frame is rendered
-        let stored = source.withUnsafeBuffer { CIImage(cvPixelBuffer: $0) }
-        let transform = FrameInstruction.coreImageTransform(
-            instruction.transform, sourceHeight: stored.extent.height, renderHeight: instruction.renderSize.height)
-        let picture = stored.transformed(by: transform)
+        let picture = Self.picture(for: request, instruction: instruction)
         guard let overlay = instruction.overlay else {
             Self.finish(request, picture: picture, board: nil, renderSize: instruction.renderSize)
             return
@@ -129,13 +120,32 @@ nonisolated final class FrameCompositor: NSObject, AVVideoCompositing, Sendable 
         }
     }
 
+    /// The piece's stored frame for this request, turned upright and fitted into the render frame; nil where the
+    /// piece has no frame (a segment whose sound outlasts its last video frame is inserted for the file's whole
+    /// duration, and a range rounded to 1/600 s can end just past the track): that frame is drawn black, as the
+    /// default compositor draws it, rather than failing the export.
+    private static func picture(
+        for request: AVAsynchronousVideoCompositionRequest, instruction: FrameInstruction
+    ) -> CIImage? {
+        guard let source = request.sourceReadOnlyPixelBuffer(byTrackID: instruction.trackID) else {
+            Log.video.debug("Compositor: no source frame at \(request.compositionTime.seconds)s, drawing black")
+            return nil
+        }
+        // The image keeps the source buffer alive until the frame is rendered
+        let stored = source.withUnsafeBuffer { CIImage(cvPixelBuffer: $0) }
+        let transform = FrameInstruction.coreImageTransform(
+            instruction.transform, sourceHeight: stored.extent.height, renderHeight: instruction.renderSize.height)
+        return stored.transformed(by: transform)
+    }
+
     func cancelAllPendingVideoCompositionRequests() {
         generation.withLock { $0 += 1 }
     }
 
-    /// Draws `picture` over black and `board` over both into a new buffer of the render context.
+    /// Draws `picture` (none: a black frame) over black and `board` over both into a new buffer of the render
+    /// context.
     private static func finish(
-        _ request: AVAsynchronousVideoCompositionRequest, picture: CIImage, board: CIImage?, renderSize: CGSize
+        _ request: AVAsynchronousVideoCompositionRequest, picture: CIImage?, board: CIImage?, renderSize: CGSize
     ) {
         let output: CVMutablePixelBuffer
         do {
@@ -145,10 +155,14 @@ nonisolated final class FrameCompositor: NSObject, AVVideoCompositing, Sendable 
             return
         }
         let frame = CGRect(origin: .zero, size: renderSize)
-        // Black shows only where the piece does not cover the frame (letterbox bands)
-        var image =
-            picture.extent.contains(frame)
-            ? picture : picture.composited(over: CIImage(color: .black).cropped(to: frame))
+        // Black shows only where the piece does not cover the frame (letterbox bands), or where it has no frame
+        let black = CIImage(color: .black).cropped(to: frame)
+        var image: CIImage
+        if let picture {
+            image = picture.extent.contains(frame) ? picture : picture.composited(over: black)
+        } else {
+            image = black
+        }
         if let board { image = board.composited(over: image) }
         // The render context is the render size unless a player scales it (renderScale)
         let size = request.renderContext.size
