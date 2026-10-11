@@ -14,6 +14,10 @@ print(f"{d.get('result')}: {d.get('passedTests')} passed, {d.get('failedTests')}
       f"{d.get('skippedTests')} skipped, {d.get('expectedFailures')} expected failures")
 for f in d.get("testFailures", [])[:30]:
     print(f"  ✘ {f.get('testName')}: {f.get('failureText')}")
-# A failed test fails `make test` even if xcodebuild itself exited 0
-sys.exit(1 if (d.get("failedTests") or 0) > 0 or d.get("result") == "Failed" else 0)
+# A failed test fails `make test` even if xcodebuild itself exited 0; so does a run of no tests at all (a T= filter
+# that matches nothing, e.g. a file name instead of a suite name, or a function without its "()")
+ran = (d.get("passedTests") or 0) + (d.get("failedTests") or 0)
+if ran == 0:
+    print("no tests ran: check the T= filter (suite names, not file names; a function needs its \"()\")")
+sys.exit(1 if ran == 0 or (d.get("failedTests") or 0) > 0 or d.get("result") == "Failed" else 0)
 PY
