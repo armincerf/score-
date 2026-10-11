@@ -80,9 +80,12 @@ enum MediaExportService {
 
     // MARK: - Full Video Export
 
-    /// Concatenates `segments` (in order) into one upright movie.
+    /// Concatenates `segments` (in order) into one upright movie. `corrections` is aligned with `segments` (a
+    /// missing entry is `.none`): the extra turn each segment needs on top of its preferredTransform, as decided
+    /// from its pictures by `VideoOrientationDetector`.
     static func exportFullVideo(
         segments: [URL],
+        corrections: [VideoRotationCorrection] = [],
         to outputURL: URL,
         quality: ExportQuality = .hd720p,
         progressHandler: @escaping ProgressHandler = { _ in }
@@ -90,7 +93,7 @@ enum MediaExportService {
         guard !segments.isEmpty else { throw ExportError.noVideoTrackInSource }
         try? FileManager.default.removeItem(at: outputURL)
 
-        let built = try await makeComposition(clips: segments.map { ($0, nil) })
+        let built = try await makeComposition(clips: segments.map { ($0, nil) }, corrections: corrections)
         try await exportComposition(built, to: outputURL, quality: quality, progressHandler: progressHandler)
 
         return ExportResult(
@@ -140,14 +143,17 @@ enum MediaExportService {
         }
     }
 
-    /// Size of a track once its preferredTransform is applied, and the transform that puts
-    /// the rotated frame at the origin. Pure so it can be unit-tested.
+    /// Size of a track once its preferredTransform and then `correction` (a clockwise turn about the frame's
+    /// centre) are applied, and the transform that puts the final frame at the origin. Pure so it can be
+    /// unit-tested.
     nonisolated static func uprightGeometry(
-        naturalSize: CGSize, preferredTransform: CGAffineTransform
+        naturalSize: CGSize, preferredTransform: CGAffineTransform, correction: VideoRotationCorrection = .none
     ) -> (size: CGSize, transform: CGAffineTransform) {
         let rect = CGRect(origin: .zero, size: naturalSize).applying(preferredTransform)
         let fix = CGAffineTransform(translationX: -rect.minX, y: -rect.minY)
-        return (CGSize(width: abs(rect.width), height: abs(rect.height)), preferredTransform.concatenating(fix))
+        let metadataSize = CGSize(width: abs(rect.width), height: abs(rect.height))
+        let transform = preferredTransform.concatenating(fix).concatenating(correction.transform(for: metadataSize))
+        return (correction.rotatedSize(metadataSize), transform)
     }
 
     // MARK: - Private Implementation
@@ -162,8 +168,11 @@ enum MediaExportService {
     }
 
     /// Inserts each (file, range) in order; nil range = the whole file. Every piece is rotated
-    /// upright with its own preferredTransform; the render size follows the first piece.
-    private static func makeComposition(clips: [(url: URL, range: CMTimeRange?)]) async throws -> BuiltComposition {
+    /// upright with its own preferredTransform, then by its entry in `corrections` (aligned with `clips`;
+    /// missing entries are `.none`); the render size follows the first piece.
+    private static func makeComposition(
+        clips: [(url: URL, range: CMTimeRange?)], corrections: [VideoRotationCorrection] = []
+    ) async throws -> BuiltComposition {
         let composition = AVMutableComposition()
         guard
             let videoTrack = composition.addMutableTrack(
@@ -178,7 +187,7 @@ enum MediaExportService {
         var instructions: [AVVideoCompositionInstruction] = []
         var renderSize: CGSize?
 
-        for clip in clips {
+        for (index, clip) in clips.enumerated() {
             let asset = AVURLAsset(url: clip.url, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
             guard let sourceVideo = try await asset.loadTracks(withMediaType: .video).first else {
                 continue  // unreadable segment: skip rather than fail the whole export
@@ -195,7 +204,9 @@ enum MediaExportService {
             }
 
             let (naturalSize, preferredTransform) = try await sourceVideo.load(.naturalSize, .preferredTransform)
-            let geometry = uprightGeometry(naturalSize: naturalSize, preferredTransform: preferredTransform)
+            let correction = corrections.indices.contains(index) ? corrections[index] : .none
+            let geometry = uprightGeometry(
+                naturalSize: naturalSize, preferredTransform: preferredTransform, correction: correction)
             if renderSize == nil { renderSize = geometry.size }
 
             var layer = AVVideoCompositionLayerInstruction.Configuration(assetTrack: videoTrack)
@@ -209,6 +220,9 @@ enum MediaExportService {
         }
 
         guard let renderSize, cursor > .zero else { throw ExportError.noVideoTrackInSource }
+        // An audio track nothing was inserted into (silent sources, e.g. the simulator's mock footage) makes the
+        // export fail with AVFoundationErrorDomain -11838 "operation not supported for this media"
+        if let audioTrack, audioTrack.segments.isEmpty { composition.removeTrack(audioTrack) }
         let configuration = AVVideoComposition.Configuration(
             frameDuration: CMTime(value: 1, timescale: 30),
             instructions: instructions,
