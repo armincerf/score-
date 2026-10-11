@@ -21,10 +21,11 @@ XCB          := scripts/xcb.sh
 T ?=
 ONLY := $(if $(T),-only-testing:'$(T)',)
 
-.PHONY: help setup build build-watch test test-summary lint format check skills clean sim-list sim-reset deploy install
+.PHONY: help setup build build-watch test test-summary lint format check skills clean sim-list sim-reset deploy install \
+        testflight testflight-export testflight-status testers
 
 help: ## Show this help
-	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
 setup: ## Install dev tools (brew), git hooks and Xcode agent skills
 	@command -v brew >/dev/null || { echo "Homebrew required: https://brew.sh"; exit 1; }
@@ -74,6 +75,24 @@ deploy: ## Build Release for a connected iPhone and install + launch it (devicec
 
 install: ## Install the last device build without rebuilding
 	@scripts/deploy-device.sh --no-build
+
+# TestFlight (see AGENTS.md, "TestFlight"). VERSION=X.Y.Z overrides the marketing version;
+# NOTES="..." sets the build's What to Test text.
+testflight: ## Archive + upload to TestFlight, wait for processing, send to "Score testers"
+	@python3 scripts/asc.py preflight
+	@build=$$(date -u +%Y%m%d.%H%M%S); \
+	BUILD_NUMBER=$$build scripts/testflight.sh $(if $(VERSION),--version '$(VERSION)',); \
+	python3 scripts/asc.py wait-build "$$build"; \
+	python3 scripts/asc.py distribute "$$build" $${NOTES:+--notes "$$NOTES"}
+
+testflight-export: ## Archive + export an App Store .ipa without uploading (checks signing)
+	@scripts/testflight.sh --no-upload $(if $(VERSION),--version '$(VERSION)',)
+
+testflight-status: ## App Store Connect app record, latest builds and beta groups
+	@python3 scripts/asc.py status
+
+testers: ## Ensure the external "Score testers" group has its testers; list their state
+	@python3 scripts/asc.py ensure-testers
 
 sim-reset: ## Erase the test simulator (fixes "Failed to install or launch the test runner")
 	@udid=$$(scripts/simulator-udid.sh "$(SIM_NAME)"); xcrun simctl shutdown "$$udid" >/dev/null 2>&1 || true; \
