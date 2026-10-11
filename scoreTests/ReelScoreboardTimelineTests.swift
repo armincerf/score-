@@ -3,7 +3,8 @@
 //  scoreTests
 //
 //  The reel scoreboard's rules: the score and server at each clip's start, the celebration state at the end of
-//  attributed clips that are long enough, and the reel-time ranges laid end to end in clip order.
+//  attributed clips that are long enough and whose point the game recorded (the game's next timed point, won by
+//  the highlight's player), and the reel-time ranges laid end to end in clip order.
 //
 
 import CoreMedia
@@ -68,8 +69,9 @@ struct ReelScoreboardTimelineTests {
 
     @Test("A clip in the first game shows the score at its start, who serves, then the winner's point")
     func clipInFirstGame() throws {
+        // Points at 10, 11, 12 and 13 s; the clip starts at the third and player two wins the rally (13 s)
         let timeline = Self.timeline(
-            games: [], current: Self.points([1, 2, 1], from: 10), currentFirstServer: 1)
+            games: [], current: Self.points([1, 2, 1, 2], from: 10), currentFirstServer: 1)
         let cues = timeline.cues(for: [Self.clip(game: 0, start: 12, player: 2, reelDuration: 8)])
 
         try #require(cues.count == 2)
@@ -93,8 +95,11 @@ struct ReelScoreboardTimelineTests {
         arguments: [(19, 10, 10, 1), (20, 11, 10, 2), (21, 11, 11, 1), (22, 12, 11, 2)])
     func deuceInGameThree(lastPoint: Int, one: Int, two: Int, server: Int) throws {
         let timeline = Self.timeline(games: Self.threeGames, current: [], currentFirstServer: 2)
+        // The highlight goes to whoever won the rally, as the app attributes it: game 3's next point
+        let winner = Self.threeGames[2].points[lastPoint + 1].player
         let states = timeline.states(
-            for: HighlightClip(startTimestamp: 200 + Double(lastPoint), endTimestamp: 230, player: 1, gameNumber: 2))
+            for: HighlightClip(
+                startTimestamp: 200 + Double(lastPoint), endTimestamp: 230, player: winner, gameNumber: 2))
 
         // Games before game 3 only (1-1): game 3's own result is not on the board yet
         #expect(states.start.playerOneGames == 1 && states.start.playerTwoGames == 1)
@@ -103,7 +108,9 @@ struct ReelScoreboardTimelineTests {
         #expect(
             server == ServingLogic.calculateCurrentServer(firstServer: 1, playerOneScore: one, playerTwoScore: two))
         let won = try #require(states.celebration)
-        #expect(won.playerOnePoints == one + 1 && won.playerTwoPoints == two && won.pointWonBy == 1)
+        #expect(won.pointWonBy == winner)
+        #expect(won.playerOnePoints == (winner == 1 ? one + 1 : one))
+        #expect(won.playerTwoPoints == (winner == 2 ? two + 1 : two))
         #expect(won.server == (server == 1 ? 2 : 1), "at deuce the serve changes after every point")
     }
 
@@ -144,7 +151,8 @@ struct ReelScoreboardTimelineTests {
         "Only clips of at least 3 s get the 1.2 s celebration at their end",
         arguments: [(0.5, 1), (2.99, 1), (3.0, 2), (10.0, 2)])
     func celebrationNeedsThreeSeconds(duration: Double, expectedCues: Int) throws {
-        let timeline = Self.timeline(games: [], current: Self.points([2], from: 0), currentFirstServer: 1)
+        // 0-1 at 0 s, the clip's start; player one wins the rally (1-1 at 1 s)
+        let timeline = Self.timeline(games: [], current: Self.points([2, 1], from: 0), currentFirstServer: 1)
         let cues = timeline.cues(for: [Self.clip(game: 0, start: 0, player: 1, reelDuration: duration)])
         try #require(cues.count == expectedCues)
         #expect(cues[0].state.pointWonBy == nil)
@@ -155,14 +163,44 @@ struct ReelScoreboardTimelineTests {
         }
     }
 
+    @Test("An attributed clip with no later point in its game (a forced End Game) shows one state, no celebration")
+    func attributedClipWithoutItsPoint() throws {
+        // Game 1 ended by End Game at 6-4 (last point at 9 s) and awarded to player one, who was credited with the
+        // still-pending highlight; game 2 has a point by player one, which belongs to game 2, not to the clip
+        let forced = GameResult(
+            playerOneScore: 6, playerTwoScore: 4, winner: 1,
+            points: Self.points([1, 2, 1, 1, 2, 2, 1, 2, 1, 1], from: 0),
+            firstServer: 1)
+        let timeline = Self.timeline(games: [forced], current: Self.points([1], from: 60), currentFirstServer: 2)
+        let cues = timeline.cues(for: [Self.clip(game: 0, start: 9, player: 1, reelDuration: 6)])
+
+        try #require(cues.count == 1, "no point after the clip's start, so nothing to celebrate")
+        #expect(
+            cues[0].state
+                == ReelScoreboardState(
+                    playerOneName: "Alex", playerTwoName: "Lucio", playerOneGames: 0, playerTwoGames: 0,
+                    playerOnePoints: 6, playerTwoPoints: 4, server: 2, pointWonBy: nil))
+        Self.expectRange(cues[0].timeRange, from: 0, to: 6)
+    }
+
+    @Test("A clip whose next recorded point went to the other player shows no celebration")
+    func nextPointByTheOtherPlayer() {
+        let timeline = Self.timeline(games: [], current: Self.points([1, 2, 2], from: 0), currentFirstServer: 1)
+        // The clip starts at 1-1 (1 s); the game's next point (2 s) is player two's, not the highlight's player one
+        let states = timeline.states(for: HighlightClip(startTimestamp: 1, endTimestamp: 6, player: 1, gameNumber: 0))
+        #expect(states.start.playerOnePoints == 1 && states.start.playerTwoPoints == 1)
+        #expect(states.celebration == nil)
+    }
+
     // MARK: - Reel time
 
     @Test("Clips are laid end to end from reel time 0, in clip order, each with its own game's score")
     func clipsAreLaidEndToEnd() throws {
         let timeline = Self.timeline(
             games: Array(Self.threeGames.prefix(1)), current: Self.points([2, 2], from: 50), currentFirstServer: 2)
+        // Clip 1 starts at game 1's fifth point (4 s); player two won the next one (5 s)
         let cues = timeline.cues(for: [
-            Self.clip(game: 0, start: 4, player: 1, reelDuration: 4),
+            Self.clip(game: 0, start: 4, player: 2, reelDuration: 4),
             Self.clip(game: 1, start: 51, player: 2, reelDuration: 2.5),
         ])
 
@@ -204,11 +242,13 @@ struct ReelScoreboardTimelineTests {
     }
 
     @Test("Without the current game's first server the board shows no serve marker")
-    func unknownFirstServer() {
-        let timeline = Self.timeline(games: [], current: Self.points([1], from: 0), currentFirstServer: nil)
+    func unknownFirstServer() throws {
+        // 1-0 at 0 s, the clip's start; player two wins the rally (1-1 at 1 s)
+        let timeline = Self.timeline(games: [], current: Self.points([1, 2], from: 0), currentFirstServer: nil)
         let states = timeline.states(for: HighlightClip(startTimestamp: 0, endTimestamp: 5, player: 2, gameNumber: 0))
-        #expect(states.start.server == nil && states.celebration?.server == nil)
-        #expect(states.celebration?.playerTwoPoints == 1)
+        let won = try #require(states.celebration)
+        #expect(states.start.server == nil && won.server == nil)
+        #expect(won.playerOnePoints == 1 && won.playerTwoPoints == 1 && won.pointWonBy == 2)
     }
 
     // MARK: - From the live match

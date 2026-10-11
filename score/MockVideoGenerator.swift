@@ -120,6 +120,10 @@ nonisolated enum MockVideoGenerator {
     }
 
     private static func draw(in context: CGContext, time: TimeInterval) {
+        // UIKit draws in top-left coordinates, but a bitmap context's origin is bottom-left: flip it first, or the
+        // text comes out upside down and mirrored with the caption at the bottom
+        context.translateBy(x: 0, y: videoSize.height)
+        context.scaleBy(x: 1, y: -1)
         // UIKit string drawing needs a current context; push ours for the duration of the draw.
         UIGraphicsPushContext(context)
         defer { UIGraphicsPopContext() }

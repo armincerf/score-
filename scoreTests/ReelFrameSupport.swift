@@ -117,9 +117,43 @@ struct ReelPixels {
         points(in: rect, step: 1).filter { predicate(rgb(at: $0)) }.count
     }
 
+    /// Median of (r + g + b) / 3 over a rectangle (every pixel): the colour of a cell's background, whatever its
+    /// digit, since a digit covers less than half of its cell.
+    func medianBrightness(in rect: CGRect) -> Int {
+        let levels = points(in: rect, step: 1).map(brightness(at:)).sorted()
+        return levels.isEmpty ? 0 : levels[levels.count / 2]
+    }
+
+    /// How many pixels of a rectangle (every pixel) are ink in one frame and not in the other. Ink is the cell's
+    /// minority colour: a pixel whose brightness is more than `contrast` away from the rectangle's median brightness
+    /// in its own frame (a white digit on the dark panel, a black digit on the white celebration cell). Video
+    /// drifting behind the translucent panel moves the background, not the ink, so only a changed glyph counts.
+    func inkChanges(to other: Self, in rect: CGRect, contrast: Int = 90) -> Int {
+        zip(inkMask(in: rect, contrast: contrast), other.inkMask(in: rect, contrast: contrast)).filter { $0 != $1 }
+            .count
+    }
+
+    /// How many pixels of a rectangle (every pixel) are ink, as `inkChanges` classifies them.
+    func inkCount(in rect: CGRect, contrast: Int = 90) -> Int {
+        inkMask(in: rect, contrast: contrast).filter(\.self).count
+    }
+
     /// Gold of the games box and the serve marker, allowing for re-encoding.
     static func isGold(_ colour: (r: Int, g: Int, b: Int)) -> Bool {
         colour.r > 180 && colour.g > 130 && colour.b < 120
+    }
+
+    private func brightness(at point: CGPoint) -> Int {
+        let colour = rgb(at: point)
+        return (colour.r + colour.g + colour.b) / 3
+    }
+
+    /// Row by row, every pixel of `rect`: whether it stands out from the rectangle's median brightness.
+    private func inkMask(in rect: CGRect, contrast: Int) -> [Bool] {
+        let levels = points(in: rect, step: 1).map(brightness(at:))
+        guard !levels.isEmpty else { return [] }
+        let median = levels.sorted()[levels.count / 2]
+        return levels.map { abs($0 - median) > contrast }
     }
 
     private func offset(of point: CGPoint) -> Int {

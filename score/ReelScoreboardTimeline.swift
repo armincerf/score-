@@ -3,9 +3,10 @@
 //  score
 //
 //  What the highlight reel's scoreboard shows, and when. For each clip of the reel (in reel order) the board
-//  shows the score as the rally starts and, when the clip is long enough and the highlight is attributed, the
-//  winner's row lit with the new score for the clip's last 1.2 s. Pure, so the rules are unit-tested; the
-//  bitmaps are rendered from these states (`MediaExportService.scoreboardOverlays`) before the export starts.
+//  shows the score as the rally starts and, when the clip is long enough and the game recorded the rally's point
+//  for the highlight's player, the winner's row lit with the new score for the clip's last 1.2 s. Pure, so the
+//  rules are unit-tested; the bitmaps are rendered from these states (`MediaExportService.scoreboardOverlays`)
+//  before the export starts.
 //
 
 import CoreMedia
@@ -88,7 +89,8 @@ nonisolated struct ReelScoreboardTimeline: Sendable {
         return cues
     }
 
-    /// The board as the clip's rally starts and, for an attributed highlight, after its point is won.
+    /// The board as the clip's rally starts and, for an attributed highlight whose point the game recorded (the
+    /// game's first timed point after the clip's start, won by the highlight's player), after that point.
     func states(for clip: HighlightClip) -> (start: ReelScoreboardState, celebration: ReelScoreboardState?) {
         let gameNumber = max(0, clip.gameNumber)
         let earlier = games.prefix(gameNumber)
@@ -111,7 +113,13 @@ nonisolated struct ReelScoreboardTimeline: Sendable {
         let two = scored.filter { $0.player == 2 }.count
         let start = board(points: one, two, server: server(afterPoints: one + two, firstServer: game.firstServer))
 
-        guard let winner = clip.player, winner == 1 || winner == 2 else { return (start, nil) }
+        // The celebration is the point the game recorded after the rally (its first timed point after the clip's
+        // start), shown only when the highlight's player won it. A highlight credited to the game winner by a
+        // forced End Game has no such point, and the board must not invent one.
+        let next = game.points.first { point in point.videoTimestamp.map { $0 > clip.startTimestamp } ?? false }
+        guard let next, let winner = clip.player, next.player == winner, winner == 1 || winner == 2 else {
+            return (start, nil)
+        }
         let won = board(
             points: winner == 1 ? one + 1 : one, winner == 2 ? two + 1 : two,
             server: server(afterPoints: one + two + 1, firstServer: game.firstServer), wonBy: winner)
