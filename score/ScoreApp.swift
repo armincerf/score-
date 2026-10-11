@@ -23,6 +23,10 @@ struct ScoreApp: App {
 
             let context = modelContainer.mainContext
             let eventStore = EventStore(modelContext: context)
+            #if DEBUG
+                // Launch-argument sample data for screenshots; runs before anything reads the store
+                DebugSeed.applyIfRequested(eventStore: eventStore, modelContext: context)
+            #endif
             let stateProjector = StateProjector()
             let undoService = UndoService(eventStore: eventStore, stateProjector: stateProjector)
 

@@ -167,6 +167,14 @@ struct HomeView: View {
                 }
             }
             .navigationBarHidden(true)
+            .onAppear {
+                #if DEBUG
+                    if DebugSeed.showsNewMatchSheet, !showingNameSheet {  // screenshot hook, see DebugSeed
+                        prepareMatchName()
+                        showingNameSheet = true
+                    }
+                #endif
+            }
             .sheet(isPresented: $showingNameSheet) {
                 MatchNameSheet(
                     player1Name: $player1Name,

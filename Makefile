@@ -22,7 +22,7 @@ T ?=
 ONLY := $(if $(T),-only-testing:'$(T)',)
 
 .PHONY: help setup build build-watch test test-summary lint format check skills clean sim-list sim-reset deploy install \
-        testflight testflight-export testflight-status testers
+        testflight testflight-export testflight-status testers screenshot
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -93,6 +93,11 @@ testflight-status: ## App Store Connect app record, latest builds and beta group
 
 testers: ## Ensure the internal all-builds "Score testers" group has its testers; list them
 	@python3 scripts/asc.py ensure-testers
+
+# Screenshots (see AGENTS.md, "Screenshots"). ARGS are launch arguments understood by DebugSeed.swift.
+screenshot: ## Build + launch on the simulator and save a PNG: make screenshot OUT=x.png [ARGS="-seedSampleMatches"] [DARK=1] [NO_BUILD=1]
+	@scripts/screenshot.sh --sim "$(SIM_NAME)" $(if $(DARK),--dark,) $(if $(NO_BUILD),--no-build,) \
+	  $(if $(ARGS),--args '$(ARGS)',) "$(or $(OUT),.build/shots/home.png)"
 
 sim-reset: ## Erase the test simulator (fixes "Failed to install or launch the test runner")
 	@udid=$$(scripts/simulator-udid.sh "$(SIM_NAME)"); xcrun simctl shutdown "$$udid" >/dev/null 2>&1 || true; \

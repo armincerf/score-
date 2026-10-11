@@ -31,6 +31,7 @@ make setup        # brew tools, git hooks, Apple's Xcode agent skills
 make deploy       # Release build -> connected iPhone (+ paired watch) via devicectl
 make testflight   # archive + upload + wait + send to the "Score testers" group (see TestFlight)
 make testflight-status / make testers / make testflight-export
+make screenshot   # build + launch on the simulator and save a PNG (see Screenshots)
 ```
 
 Output is filtered through `xcbeautify --quiet`: only errors, warnings and test results are
@@ -73,6 +74,7 @@ score/                      iOS app target
   WatchSyncState.swift        Minimal sync payload (currently unused by the live protocol)
   Log.swift                   os.Logger categories: app, match, video, audio, store, ui, ai
   PreviewSupport.swift        In-memory SwiftData fixture for #Preview (DEBUG only)
+  DebugSeed.swift             DEBUG-only sample matches / UI hooks driven by launch arguments (see Screenshots)
   AI/MatchSummaryModels.swift @Generable MatchAnalysis + Codable cache + MatchContext prompt builder
   AI/MatchSummaryService.swift FoundationModels session; availability + errors
   AI/MatchSummaryView.swift   Summary card, loading/error/unavailable states, container with cache
@@ -81,7 +83,7 @@ scorewatch Watch App/       watchOS target (no shared module: ScoreState.swift i
   ScoreWatchApp.swift, ContentView.swift (3-page TabView: end-game / scoring / highlight), WatchSessionManager.swift, ScoreState.swift, Log.swift
   AppIcon.icon/               Watch app icon (same artwork, circular)
 scoreTests/                 Swift Testing suites (@testable import score)
-scripts/                    xcb.sh (xcodebuild filter), deploy-device.sh (devicectl install), sync-xcode-skills.sh, hooks/,
+scripts/                    xcb.sh (xcodebuild filter), deploy-device.sh (devicectl install), screenshot.sh, sync-xcode-skills.sh, hooks/,
                             testflight.sh (archive + upload), asc.py (App Store Connect API: testers, distribution)
 docs/icons/                 Rendered icon previews (ictool exports)
 .github/workflows/ci.yml    lint (macos-26) + build/test (xcode-27 image)
@@ -174,6 +176,32 @@ from Bash, keep ids 24 hex chars and unique, then verify with
 `plutil -lint score.xcodeproj/project.pbxproj && xcodebuild -list -project score.xcodeproj`
 and a `make build`. Shared schemes live in `score.xcodeproj/xcshareddata/xcschemes/`.
 `xcuserdata` is gitignored.
+
+## Screenshots
+
+Look at UI work before declaring it done. `make screenshot` builds a Debug simulator build into
+`.build/sim`, installs and launches it on `SIM_NAME` (status bar overridden to 9:41) and saves a
+PNG you can open with the Read tool:
+
+```
+make screenshot OUT=.build/shots/home.png                       # the app as a new user sees it
+make screenshot OUT=.build/shots/home.png ARGS="-seedSampleMatches -seedActiveMatch"
+make screenshot OUT=.build/shots/home-dark.png DARK=1 NO_BUILD=1 ARGS="-seedSampleMatches"
+make screenshot OUT=.build/shots/sheet.png NO_BUILD=1 ARGS="-seedSampleMatches -showNewMatchSheet"
+make screenshot OUT=.build/shots/home-ax.png NO_BUILD=1 \
+  ARGS="-seedSampleMatches -UIPreferredContentSizeCategoryName UICTContentSizeCategoryAccessibilityL"
+```
+
+- Launch arguments are read by `score/DebugSeed.swift` (DEBUG builds only): `-seedSampleMatches`
+  replaces every stored match with six finished Alex vs Lucio matches (one with no winner, each with
+  points, highlights and game events); `-seedActiveMatch` adds a live match 14 minutes in (1-0 in
+  games, 5-3 in game two), so the home screen shows its resume state; `-showNewMatchSheet` opens the
+  new-match sheet on the home screen. The seed wipes the simulator's store: only ever pass it to
+  `simctl`, never to a device. `-UIPreferredContentSizeCategoryName <UICTContentSizeCategory...>`
+  is UIKit's own Dynamic Type override; check at least `AccessibilityL` for truncation.
+- `scripts/screenshot.sh --udid <UDID> --no-build --wait 5 out.png` targets another simulator or
+  reuses the last build; `--wait` lengthens the launch-to-capture delay for slow screens.
+- `.build/shots/` is gitignored; copy anything worth keeping into `docs/`.
 
 ## Icon
 
