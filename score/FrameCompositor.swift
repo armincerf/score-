@@ -81,9 +81,8 @@ nonisolated final class FrameCompositor: NSObject, AVVideoCompositing, Sendable 
     let requiredPixelBufferAttributesForRenderContext: [String: any Sendable] = bufferAttributes([
         kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
     ])
-    /// Bumped by `cancelAllPendingVideoCompositionRequests`: a frame still waiting for its board finishes as
-    /// cancelled when this changed meanwhile.
-    private let generation = Mutex(0)
+    /// Frames waiting for their board to be rendered.
+    private let pending = Mutex(PendingFrames<AVAsynchronousVideoCompositionRequest>())
 
     enum CompositorError: Error {
         case unexpectedInstruction
@@ -107,14 +106,12 @@ nonisolated final class FrameCompositor: NSObject, AVVideoCompositing, Sendable 
             Self.finish(request, picture: picture, board: board, renderSize: instruction.renderSize)
         case .pending:
             // The board is rendered on the main actor; finish the request from that task (AVFoundation allows a
-            // request to be finished on any thread) rather than block this one
-            let started = generation.withLock { $0 }
+            // request to be finished on any thread) rather than block this one. Parked meanwhile, so a cancel can
+            // finish it first; whichever takes it out finishes it, once
+            let ticket = pending.withLock { $0.park(request) }
             Task {
                 let board = await overlay.board(at: time)
-                guard self.generation.withLock({ $0 }) == started else {
-                    request.finishCancelledRequest()
-                    return
-                }
+                guard let request = self.pending.withLock({ $0.take(ticket) }) else { return }
                 Self.finish(request, picture: picture, board: board, renderSize: instruction.renderSize)
             }
         }
@@ -138,8 +135,16 @@ nonisolated final class FrameCompositor: NSObject, AVVideoCompositing, Sendable 
         return stored.transformed(by: transform)
     }
 
+    /// Finishes every frame still waiting for its board as cancelled before returning, as AVVideoCompositing
+    /// requires (frames composed synchronously in `startRequest` are already finished). Never waits for a board:
+    /// the render runs on the main actor, where AVFoundation may be calling from.
     func cancelAllPendingVideoCompositionRequests() {
-        generation.withLock { $0 += 1 }
+        // Finished outside the lock: AVFoundation may start the next request from inside a finish call
+        let cancelled = pending.withLock { $0.takeAll() }
+        for request in cancelled { request.finishCancelledRequest() }
+        if !cancelled.isEmpty {
+            Log.video.debug("Compositor: cancelled \(cancelled.count) frame(s) waiting for a board")
+        }
     }
 
     /// Draws `picture` (none: a black frame) over black and `board` over both into a new buffer of the render
@@ -174,5 +179,35 @@ nonisolated final class FrameCompositor: NSObject, AVVideoCompositing, Sendable 
         let composed = image.cropped(to: bounds)
         output.withUnsafeBuffer { context.render(composed, to: $0, bounds: bounds, colorSpace: nil) }
         request.finish(withComposedPixelBuffer: CVReadOnlyPixelBuffer(output))
+    }
+}
+
+/// Requests parked while their board renders, by ticket. Each comes out exactly once: through `take` (its board is
+/// ready) or `takeAll` (the compositor was cancelled), whichever is first, and that caller finishes it. Pure so it can
+/// be unit-tested.
+nonisolated struct PendingFrames<Request> {
+    private var nextTicket = 0
+    private var waiting: [Int: Request] = [:]
+
+    var count: Int { waiting.count }
+    var isEmpty: Bool { waiting.isEmpty }
+
+    /// Parks `request`; the ticket takes it out again.
+    mutating func park(_ request: Request) -> Int {
+        nextTicket += 1
+        waiting[nextTicket] = request
+        return nextTicket
+    }
+
+    /// The request parked under `ticket`, unless it has been taken out already.
+    mutating func take(_ ticket: Int) -> Request? {
+        waiting.removeValue(forKey: ticket)
+    }
+
+    /// Every request still parked, in the order they were parked.
+    mutating func takeAll() -> [Request] {
+        let all = waiting.sorted { $0.key < $1.key }.map(\.value)
+        waiting.removeAll()
+        return all
     }
 }
