@@ -125,6 +125,71 @@ struct VideoOrientationTests {
         #expect(OrientationDecision.decide(scores: [.upsideDown180: 0.5], minimumScore: 0.4) == .upsideDown180)
     }
 
+    // MARK: - Pooled decision (segments stored alike decide together)
+
+    private typealias Segment = (key: String?, scores: [Correction: Double])
+
+    /// Confident footage of a phone mounted a quarter turn off (Vision finds upright people only turned clockwise).
+    private static let turned: [Correction: Double] = [.none: 0.3, .clockwise90: 2.4, .counterclockwise270: 0.2]
+
+    @Test("A weak segment (one sampled frame, nobody in shot) follows its confident neighbours")
+    func weakSegmentFollowsGroup() {
+        let weak: [Correction: Double] = [.clockwise90: 0.4]
+        #expect(OrientationDecision.decide(scores: weak) == .none, "alone, the weak segment would keep .none")
+        let segments: [Segment] = [("landscape", weak), ("landscape", Self.turned), ("landscape", Self.turned)]
+        #expect(OrientationDecision.decide(pooling: segments) == [.clockwise90, .clockwise90, .clockwise90])
+    }
+
+    @Test("A segment whose detection failed (empty scores) follows its group")
+    func failedSegmentFollowsGroup() {
+        let segments: [Segment] = [("landscape", Self.turned), ("landscape", [:]), ("landscape", Self.turned)]
+        #expect(OrientationDecision.decide(pooling: segments) == [.clockwise90, .clockwise90, .clockwise90])
+    }
+
+    @Test("Segments stored differently decide independently, in any order")
+    func groupsDecideIndependently() {
+        let upright: [Correction: Double] = [.none: 3, .clockwise90: 0.25]
+        let upsideDown: [Correction: Double] = [.upsideDown180: 2.2, .none: 0.1]
+        let segments: [Segment] = [
+            ("landscape", Self.turned), ("portrait", upright), ("landscape", [:]), ("flipped", upsideDown),
+            ("portrait", [.clockwise90: 0.5]),
+        ]
+        #expect(
+            OrientationDecision.decide(pooling: segments)
+                == [.clockwise90, .none, .clockwise90, .upsideDown180, .none])
+        let groups = OrientationDecision.groups(pooling: segments)
+        #expect(groups.map(\.members) == [[0, 2], [1, 4], [3]], "groups in order of their first member")
+        #expect(groups[1].scores == [.none: 3, .clockwise90: 0.75], "the members' scores are summed")
+    }
+
+    @Test("All-weak or ambiguous evidence stays .none, pooled or not")
+    func allWeakStaysNone() {
+        let weak: [Correction: Double] = [.clockwise90: 0.3, .none: 0.25]
+        let segments: [Segment] = [("landscape", weak), ("landscape", weak), ("landscape", weak), ("landscape", [:])]
+        #expect(OrientationDecision.decide(pooling: segments) == [.none, .none, .none, .none])
+        #expect(OrientationDecision.decide(pooling: [Segment]()).isEmpty)
+        // Confident but contradicting segments of one group cancel out: ambiguous, so the metadata orientation stays
+        let contradicting: [Segment] = [("landscape", Self.turned), ("landscape", [.counterclockwise270: 2.4])]
+        #expect(OrientationDecision.decide(pooling: contradicting) == [.none, .none])
+    }
+
+    @Test("A segment without a key (its track could not be read) decides alone")
+    func unkeyedSegmentDecidesAlone() {
+        let segments: [Segment] = [
+            ("landscape", Self.turned), (nil, [:]), (nil, [.upsideDown180: 2]), ("landscape", [:]),
+        ]
+        #expect(OrientationDecision.decide(pooling: segments) == [.clockwise90, .none, .upsideDown180, .clockwise90])
+        #expect(OrientationDecision.groups(pooling: segments).map(\.members) == [[0, 3], [1], [2]])
+    }
+
+    @Test("The thresholds apply to the pooled scores")
+    func pooledThresholds() {
+        let half: [Correction: Double] = [.upsideDown180: 0.5]
+        #expect(OrientationDecision.decide(pooling: [("a", half), ("a", half)]) == [.upsideDown180, .upsideDown180])
+        #expect(OrientationDecision.decide(pooling: [("a", half), ("a", half)], minimumScore: 1.5) == [.none, .none])
+        #expect(OrientationDecision.corrections(for: [], count: 2) == [.none, .none])
+    }
+
     // MARK: - Body pose evidence
 
     private typealias Joint = BodyPoseEvidence.Joint
@@ -304,5 +369,58 @@ struct VideoOrientationTests {
                 naturalSize: natural, preferredTransform: transform, correction: .none)
             #expect(implicit.size == explicit.size && implicit.transform == explicit.transform)
         }
+    }
+
+    // MARK: - Fitting a piece into the render frame
+
+    @Test(
+        "A piece of another size is scaled to fit and centred on whole pixels, never cropped",
+        arguments: [
+            // piece, render, where the piece lands
+            (
+                CGSize(width: 720, height: 1280), CGSize(width: 1280, height: 720),
+                CGRect(x: 437, y: 0, width: 405, height: 720)
+            ),
+            (
+                CGSize(width: 1280, height: 720), CGSize(width: 720, height: 1280),
+                CGRect(x: 0, y: 437, width: 720, height: 405)
+            ),
+            (
+                CGSize(width: 640, height: 360), CGSize(width: 1280, height: 720),
+                CGRect(x: 0, y: 0, width: 1280, height: 720)
+            ),
+            (
+                CGSize(width: 1920, height: 1080), CGSize(width: 1280, height: 720),
+                CGRect(x: 0, y: 0, width: 1280, height: 720)
+            ),
+            (
+                CGSize(width: 1280, height: 720), CGSize(width: 1280, height: 720),
+                CGRect(x: 0, y: 0, width: 1280, height: 720)
+            ),
+        ])
+    func fittingLetterboxes(piece: CGSize, render: CGSize, lands expected: CGRect) {
+        let transform = MediaExportService.fitting(piece, into: render)
+        let landed = CGRect(origin: .zero, size: piece).applying(transform)
+        #expect(
+            abs(landed.minX - expected.minX) < 0.001 && abs(landed.minY - expected.minY) < 0.001
+                && abs(landed.width - expected.width) < 0.001 && abs(landed.height - expected.height) < 0.001,
+            "landed at \(landed)")
+        #expect(
+            CGRect(origin: .zero, size: render).insetBy(dx: -0.001, dy: -0.001).contains(landed), "inside the frame")
+        if piece == render { #expect(transform == .identity) }
+    }
+
+    @Test("A landscape segment turned a quarter, after a landscape first one, lands upright in the middle")
+    func turnedSegmentLandsInTheMiddle() {
+        let natural = CGSize(width: 1280, height: 720)
+        let render = MediaExportService.uprightGeometry(naturalSize: natural, preferredTransform: .identity).size
+        let turned = MediaExportService.uprightGeometry(
+            naturalSize: natural, preferredTransform: .identity, correction: .clockwise90)
+        let transform = turned.transform.concatenating(MediaExportService.fitting(turned.size, into: render))
+        let landed = CGRect(origin: .zero, size: natural).applying(transform)
+        #expect(abs(landed.minX - 437) < 0.001 && abs(landed.width - 405) < 0.001 && abs(landed.height - 720) < 0.001)
+        // Still turned clockwise: the source's top-left corner is the landed picture's top-right
+        let corner = CGPoint.zero.applying(transform)
+        #expect(abs(corner.x - landed.maxX) < 0.001 && abs(corner.y) < 0.001, "top-left landed at \(corner)")
     }
 }

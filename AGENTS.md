@@ -233,6 +233,16 @@ scripts/screenshot.sh --wait 15 --args "-seedSampleMatches -seedReel -openLatest
   runner-up) into a `VideoRotationCorrection` that `uprightGeometry` applies after the preferredTransform.
   Scores and decisions are logged (`Log.video` "Orientation <file>: none=... -> ...") for real-footage problems.
   Conventions are pinned by `OrientationConventionTests` (Vision as the oracle) and `VideoOrientationTests`.
+- Segments **stored alike** (same video track `naturalSize` and `preferredTransform`) are decided together:
+  `VideoOrientationDetector.corrections(for:)` sums their scores and `OrientationDecision.groups(pooling:)`
+  decides once per group (logged "Orientation group [<files>] stored WxH [<transform>]: ... -> ..."), so a short,
+  empty or failed segment follows its neighbours instead of keeping `.none` while they turn a quarter. As a
+  safety net `makeComposition` scales a piece whose upright size differs from the render size (the first
+  piece's) to fit and centres it (`MediaExportService.fitting`): a mismatch letterboxes, it never crops.
+- When the full export fails for a one-segment match the raw segment is kept as the full video and the reel is
+  cut from it with that segment's correction (`exportHighlightReel(..., correction:)`); a turned reel gets no
+  board (the Core Image composition shows frames as stored; warning logged). If the reel export with the board
+  throws, the manager retries once without it.
 - Vision's body pose request has **no compute device on the iOS simulator** (it throws, the detector keeps
   `.none`). Check detection on the Mac instead: `scripts/detect-orientation.sh <video>...` prints the scores
   of any recording, and `--selftest <photo of people> <dir>` turns the photo each way and checks the decision.
@@ -434,9 +444,12 @@ a new one, so that is harmless.
   `sendScore()` corrects it); the 2 s pending timeout plays an error haptic while a slow live
   send may still land; a tied-score End Game is dropped silently by the phone after the watch
   haptic; `RecentActionIDs` is in-memory only. Fix together with a watch test target.
-- Export renders every segment at the first segment's size (a mid-match orientation change, or a
-  segment whose detected correction differs from the first one's by a quarter turn, letterboxes);
-  `VideoRecordingManager` start/stop still use detached tasks.
+- Export renders every segment at the first segment's size: a segment that comes out another shape (a
+  mid-match orientation change, which is stored differently and so decided apart) is scaled to fit it
+  between black bands, not cropped. Choosing the output shape from the longest stretch of footage would be
+  better. Segments stored alike share one orientation decision, so a phone turned over mid-match without its
+  capture metadata changing (e.g. lying flat) is not caught. `VideoRecordingManager` start/stop still use
+  detached tasks.
 - Legacy rows: matches tied on games that pre-date `MatchResult.noWinner` reload as player-2
   wins; an in-progress legacy match loses its tmp recording on upgrade.
 - Several test comments in WatchCommandTests still describe the bugs they were written for.

@@ -830,6 +830,8 @@ class WatchConnectivityManager: NSObject {
 
         let fullURL = VideoStore.fileURL(matchId: matchId, kind: .full)
         var fullVideo: URL?
+        // The turn the reel's source still needs: none once the full video is exported upright
+        var sourceCorrection = VideoRotationCorrection.none
         do {
             let result = try await MediaExportService.exportFullVideo(
                 segments: segmentURLs,
@@ -842,12 +844,16 @@ class WatchConnectivityManager: NSObject {
             Log.match.info("✅ Full video exported: \(result.outputURL.lastPathComponent)")
         } catch {
             Log.match.error("❌ Full video export failed: \(error.localizedDescription)")
-            fullVideo = segmentURLs.count == 1 ? segmentURLs[0] : nil  // keep the raw file as the full video
+            if segmentURLs.count == 1 {  // keep the raw file as the full video; the reel still applies its correction
+                fullVideo = segmentURLs[0]
+                sourceCorrection = corrections.first ?? .none
+            }
         }
 
         let highlightReel = await exportHighlightReel(
             matchId: matchId,
             from: fullVideo,
+            correction: sourceCorrection,
             timeline: timeline,
             quality: quality,
             progressHandler: { progress in progressHandler(0.5 + progress * 0.5) }
@@ -885,10 +891,12 @@ class WatchConnectivityManager: NSObject {
     }
 
     /// Cuts the marked highlight clips (wall-clock ranges) out of the exported full video, with the broadcast
-    /// scoreboard burned in. Returns nil when there are no clips with footage or the export fails.
+    /// scoreboard burned in. `correction` is the turn `source` still needs (a raw segment kept as the full video).
+    /// Returns nil when there are no clips with footage or the export fails.
     private func exportHighlightReel(
         matchId: UUID,
         from source: URL?,
+        correction: VideoRotationCorrection,
         timeline: RecordingTimeline,
         quality: MediaExportService.ExportQuality,
         progressHandler: @escaping MediaExportService.ProgressHandler
@@ -926,20 +934,31 @@ class WatchConnectivityManager: NSObject {
         }
         Log.match.info("🎬 Reel scoreboard: \(cues.count) cue(s), \(scoreboard.count) rendered")
 
+        let output = VideoStore.fileURL(matchId: matchId, kind: .highlights)
+        return await exportReel(scoreboard: scoreboard) { board in
+            try await MediaExportService.exportHighlightReel(
+                from: source, to: output, clips: clips, scoreboard: board, correction: correction, quality: quality,
+                progressHandler: progressHandler)
+        }
+    }
+
+    /// Runs `export` with `scoreboard` and, when that fails, once more without it, so a failure in the board's Core
+    /// Image composition costs the board rather than the whole reel. Returns the reel's URL, or nil.
+    private func exportReel(
+        scoreboard: [OverlayCue], _ export: ([OverlayCue]) async throws -> MediaExportService.ExportResult
+    ) async -> URL? {
         do {
-            let result = try await MediaExportService.exportHighlightReel(
-                from: source,
-                to: VideoStore.fileURL(matchId: matchId, kind: .highlights),
-                clips: clips,
-                scoreboard: scoreboard,
-                quality: quality,
-                progressHandler: progressHandler
-            )
+            let result = try await export(scoreboard)
             Log.match.info("✅ Highlight reel saved: \(result.outputURL.lastPathComponent)")
             return result.outputURL
         } catch {
-            Log.match.error("❌ Highlight export failed: \(error.localizedDescription)")
-            return nil
+            guard !scoreboard.isEmpty else {
+                Log.match.error("❌ Highlight export failed: \(error.localizedDescription)")
+                return nil
+            }
+            Log.match.warning(
+                "⚠️ Highlight export with the scoreboard failed, retrying without it: \(error.localizedDescription)")
+            return await exportReel(scoreboard: [], export)
         }
     }
 

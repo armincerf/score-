@@ -243,6 +243,64 @@ struct VideoOrientationIntegrationTests {
         #expect(anticlockwise < 0.5, "anticlockwise recall \(anticlockwise)")
     }
 
+    @Test(
+        "A segment turned a quarter unlike the first is letterboxed into the first one's frame, not cropped",
+        .timeLimit(.minutes(2)))
+    func mixedCorrectionsLetterbox() async throws {
+        let source = try await Self.mockVideo(seconds: 4, name: "export-source.mov")
+        let output = try OrientationFrames.directory().appendingPathComponent("export-mixed.mov")
+        let result = try await MediaExportService.exportFullVideo(
+            segments: [source, source], corrections: [.none, .clockwise90], to: output, quality: .hd720p)
+        #expect(abs(result.duration - 8) < 0.1)
+
+        let sourceFrame = OrientationPixels(try await OrientationFrames.frame(of: source, at: 1.5))
+        let firstImage = try await OrientationFrames.frame(of: output, at: 1.5)
+        let secondImage = try await OrientationFrames.frame(of: output, at: 5.5)  // 1.5 s into the second segment
+        try OrientationFrames.save(firstImage, name: "export-mixed-first-1.5s")
+        try OrientationFrames.save(secondImage, name: "export-mixed-second-5.5s")
+        let first = OrientationPixels(firstImage)
+        let second = OrientationPixels(secondImage)
+
+        // The first segment sets the frame and is untouched
+        #expect(first.width == 1280 && first.height == 720)
+        let firstRecall = sourceFrame.brightRecall(in: first) { x, y in (x, y) }
+        #expect(firstRecall > 0.85, "first segment recall \(firstRecall)")
+
+        // The second, turned to 720x1280, is scaled by 720/1280 into a 405x720 column at x 437-842: black bands
+        // either side (the mock background is a dark colour, luma about 40, never black)
+        #expect(second.width == 1280 && second.height == 720)
+        let left = second.meanLuma(in: CGRect(x: 0, y: 0, width: 200, height: 720))
+        let right = second.meanLuma(in: CGRect(x: 1080, y: 0, width: 200, height: 720))
+        let column = second.meanLuma(in: CGRect(x: 457, y: 20, width: 365, height: 680))
+        #expect(left < 4 && right < 4, "bands should be black: left \(left), right \(right)")
+        #expect(column > 20, "the column should carry the picture (mean luma \(column))")
+
+        // Source pixel (x, y) turned clockwise is (719 - y, x) in 720x1280, then scaled and moved into the column
+        let scale = 720.0 / 1280.0
+        func placed(_ point: (x: Double, y: Double)) -> (Int, Int) {
+            (437 + Int((point.x * scale).rounded(.down)), Int((point.y * scale).rounded(.down)))
+        }
+        let clockwise = sourceFrame.brightRecall(in: second) { x, y in placed((719.5 - Double(y), Double(x) + 0.5)) }
+        let anticlockwise = sourceFrame.brightRecall(in: second) { x, y in placed((Double(y) + 0.5, 1279.5 - Double(x)))
+        }
+        #expect(clockwise > 0.85, "clockwise recall \(clockwise)")
+        #expect(anticlockwise < 0.5, "anticlockwise recall \(anticlockwise)")
+        try OrientationFrames.note(
+            "mixed corrections: first recall \(firstRecall), second clockwise \(clockwise) / anticlockwise "
+                + "\(anticlockwise), bands \(left) / \(right), column \(column)",
+            file: "export-mixed.txt")
+    }
+
+    @Test("Segments are detected and grouped without failing on an unreadable one", .timeLimit(.minutes(2)))
+    func correctionsForSeveralSegments() async throws {
+        let first = try await Self.mockVideo(seconds: 2, name: "detector-group-a.mov")
+        let second = try await Self.mockVideo(seconds: 1, name: "detector-group-b.mov")
+        let missing = try OrientationFrames.directory().appendingPathComponent("detector-missing.mov")
+        try? FileManager.default.removeItem(at: missing)
+        let corrections = await VideoOrientationDetector.corrections(for: [first, second, missing])
+        #expect(corrections == [.none, .none, .none], "mock footage has nobody in it")
+    }
+
     @Test("Silent footage (no audio track) exports to a full video and a reel", .timeLimit(.minutes(2)))
     func silentFootageExports() async throws {
         // Regression: the composition's empty audio track made both exports fail with AVFoundation -11838
