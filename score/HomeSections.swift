@@ -234,15 +234,21 @@ struct HeadToHeadCaption: View {
 
 /// The three most recent finished matches, newest first, with a link to the full history.
 struct RecentMatchesCard: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     /// The whole history, oldest first: rows open `MatchDetailView` with it, as `MatchHistoryView` does.
     let history: [MatchResult]
 
     var body: some View {
+        // At accessibility text sizes the link sits under the title instead of fighting it for the width
+        let headerLayout =
+            dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
+            : AnyLayout(HStackLayout(alignment: .firstTextBaseline))
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .firstTextBaseline) {
+            headerLayout {
                 Text("Recent")
                     .font(.headline)
-                Spacer()
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 NavigationLink("All Matches") {
                     MatchHistoryView()
                 }
@@ -298,6 +304,7 @@ struct WatchStatusCard: View {
 
 /// One finished match: players (winner in bold), date and highlights, and the games coloured by the winner.
 struct RecentMatchRow: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let playerOneName: String
     let playerTwoName: String
     let playerOneGames: Int
@@ -326,30 +333,37 @@ struct RecentMatchRow: View {
     }
 
     var body: some View {
+        // At accessibility text sizes the games move under the names, so neither has to wrap or truncate
+        let layout =
+            dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4)) : AnyLayout(HStackLayout(spacing: 12))
         HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                MatchPlayersText(playerOneName: playerOneName, playerTwoName: playerTwoName, winner: winner)
-                    .font(.body)
-                VStack {
-                    if highlightCount > 0 {
-                        Text(
-                            "\(dateText) · \(Text(Image(systemName: "star.fill")).foregroundStyle(.yellow)) \(highlightCount)"
-                        )
-                        .accessibilityLabel(Text("\(dateText), ^[\(highlightCount) highlight](inflect: true)"))
-                    } else {
-                        dateText
+            layout {
+                VStack(alignment: .leading, spacing: 2) {
+                    MatchPlayersText(playerOneName: playerOneName, playerTwoName: playerTwoName, winner: winner)
+                        .font(.body)
+                    VStack {
+                        if highlightCount > 0 {
+                            // Non-breaking spaces keep the separator and the count with the star when the line wraps
+                            Text(
+                                "\(dateText)\u{00A0}·\u{00A0}\(Text(Image(systemName: "star.fill")).foregroundStyle(.yellow))\u{00A0}\(highlightCount)"
+                            )
+                            .accessibilityLabel(Text("\(dateText), ^[\(highlightCount) highlight](inflect: true)"))
+                        } else {
+                            dateText
+                        }
                     }
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
                 }
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                Text("\(playerOneGames)–\(playerTwoGames)")
+                    .font(.title3.weight(.semibold))
+                    .fontDesign(.rounded)
+                    .monospacedDigit()
+                    .foregroundStyle(winnerColor)
+                    .accessibilityLabel(Text("\(playerOneGames) to \(playerTwoGames)"))
             }
-            Spacer(minLength: 8)
-            Text("\(playerOneGames)–\(playerTwoGames)")
-                .font(.title3.weight(.semibold))
-                .fontDesign(.rounded)
-                .monospacedDigit()
-                .foregroundStyle(winnerColor)
-                .accessibilityLabel(Text("\(playerOneGames) to \(playerTwoGames)"))
             DisclosureChevron()
         }
         .padding(.vertical, 12)
