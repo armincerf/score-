@@ -26,6 +26,15 @@ nonisolated struct RecordingSegment: Codable, Sendable, Equatable {
     }
 }
 
+/// A stretch of one segment's own footage: `start`...`end` seconds into the file of `segments[segmentIndex]`.
+nonisolated struct SegmentRange: Equatable, Sendable {
+    let segmentIndex: Int
+    let start: Double
+    let end: Double
+
+    var duration: Double { end - start }
+}
+
 /// Converts wall-clock offsets into positions in the concatenated video of all segments.
 nonisolated struct RecordingTimeline: Sendable {
     /// Segments in capture order, each with a known duration.
@@ -63,5 +72,23 @@ nonisolated struct RecordingTimeline: Sendable {
         let end = videoTime(forWallOffset: wallEnd)
         guard end - start >= minimumDuration else { return nil }
         return start...end
+    }
+
+    /// The stretches of the segments' own files that make up `videoStart`...`videoEnd` of the concatenated video, in
+    /// order: one for a range inside a segment, two (or more) for one that crosses a segment boundary. Slivers
+    /// shorter than `minimumDuration` (a range ending exactly on a boundary) are left out.
+    func segmentRanges(videoStart: Double, videoEnd: Double, minimumDuration: Double = 1e-3) -> [SegmentRange] {
+        var ranges: [SegmentRange] = []
+        var elapsed = 0.0
+        for (index, segment) in segments.enumerated() {
+            let duration = segment.duration ?? 0
+            let start = max(videoStart, elapsed)
+            let end = min(videoEnd, elapsed + duration)
+            if end - start >= minimumDuration {
+                ranges.append(SegmentRange(segmentIndex: index, start: start - elapsed, end: end - elapsed))
+            }
+            elapsed += duration
+        }
+        return ranges
     }
 }
