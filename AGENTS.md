@@ -198,7 +198,9 @@ docs/screenshots/           Home screen, Stats page and reel-player renders (mak
   `.disabled("BUG: ...")` so it documents the defect without failing CI.
 - Run one suite/test: `make test T=scoreTests/EventSourcingTests` or
   `T=scoreTests/EventSourcingTests/undoDropsLastPoint()` (a Swift Testing function needs its `()`: without
-  them xcodebuild runs 0 tests; a parameterized test can only be run through its suite).
+  them xcodebuild runs 0 tests; a parameterized test can only be run through its suite). The filter names the
+  *suite type*, not the file: `MatchVideoPlayerTests.swift` holds `LandscapeFullScreenTriggerTests` and
+  `PlaybackAudioSessionTests`. A run of 0 tests fails `make test` (scripts/test-summary.sh), as does any failed test.
 
 ## Project file changes
 
@@ -529,6 +531,12 @@ a new one, so that is harmless.
 - On a test failure xcodebuild collects simulator diagnostics (`simctl diagnose`, ~10 minutes) before it
   prints results; `make test` passes `-collect-test-diagnostics never`, so failures show at once (the result
   bundle still has every result). Keep that flag if you change the target.
+- **AVAudioSession blocks the main thread for 40-90 s per call on CI's freshly created simulator** (no audio server
+  answers), which starved every other test and tripped their time limits (October 2026: durations of trivial tests
+  all read 89 s). `AudioSessionCoordinator.session` is therefore an `InertAudioSession` whenever the process is a
+  test host (`XCTestConfigurationFilePath`); tests of the coordinator's decisions install an `AudioSessionSpy`
+  (`MatchVideoPlayerTests`). `ScoreAnnouncer` creates its `AVSpeechSynthesizer` on the first announcement for the
+  same reason. Never call `AVAudioSession.sharedInstance()` from a test.
 - If `make test` reports "Failed to install or launch the test runner ... No such process" for
   every test, the simulator is in a bad state (typically after a killed xcodebuild): run
   `make sim-reset`, or add `-parallel-testing-enabled NO` to the xcodebuild test command.

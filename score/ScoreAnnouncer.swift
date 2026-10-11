@@ -13,14 +13,18 @@ import os
 @MainActor
 @Observable
 class ScoreAnnouncer: NSObject {
-    private let synthesizer = AVSpeechSynthesizer()
+    /// Made on the first announcement: creating one starts the speech service, which is slow on a fresh simulator
+    /// and needless while announcements are off (every test). The audio session is owned by AudioSessionCoordinator.
+    private var synthesizer: AVSpeechSynthesizer?
     var isEnabled = true
     private var idleActions: [@MainActor () -> Void] = []
 
-    override init() {
-        super.init()
+    private func makeSynthesizer() -> AVSpeechSynthesizer {
+        if let synthesizer { return synthesizer }
+        let synthesizer = AVSpeechSynthesizer()
         synthesizer.delegate = self
-        // The audio session is owned by AudioSessionCoordinator (activated per match)
+        self.synthesizer = synthesizer
+        return synthesizer
     }
 
     func announceScore(
@@ -50,7 +54,7 @@ class ScoreAnnouncer: NSObject {
     /// Runs `action` now if nothing is being spoken, otherwise after the current speech finishes
     /// (so releasing the audio session does not cut an announcement off).
     func performWhenIdle(_ action: @escaping @MainActor () -> Void) {
-        if synthesizer.isSpeaking {
+        if synthesizer?.isSpeaking == true {
             idleActions.append(action)
         } else {
             action()
@@ -91,6 +95,7 @@ class ScoreAnnouncer: NSObject {
     }
 
     private func speak(_ text: String) {
+        let synthesizer = makeSynthesizer()
         synthesizer.stopSpeaking(at: .immediate)
 
         let utterance = AVSpeechUtterance(string: text)

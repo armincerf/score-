@@ -3,7 +3,7 @@
 //  scoreTests
 //
 //  Turning the phone sideways while a video plays opens the full-screen player (LandscapeFullScreenTrigger), and
-//  the detail screen's player gets the playback audio category outside a match (AudioSessionCoordinator).
+//  the detail screen's player asks for the playback audio category outside a match (AudioSessionCoordinator).
 //
 
 import AVFoundation
@@ -75,29 +75,68 @@ struct LandscapeFullScreenTriggerTests {
     }
 }
 
-/// Synchronous main-actor tests: nothing else touching the shared audio session can run in between.
+/// Records what the coordinator asks of the session, in place of AVAudioSession (which a test host never touches).
+private final class AudioSessionSpy: AudioSessionControlling {
+    var category: AVAudioSession.Category?
+    var mode: AVAudioSession.Mode?
+    var options: AVAudioSession.CategoryOptions = []
+    var activations: [Bool] = []
+
+    func setCategory(
+        _ category: AVAudioSession.Category, mode: AVAudioSession.Mode, options: AVAudioSession.CategoryOptions
+    ) throws {
+        self.category = category
+        self.mode = mode
+        self.options = options
+    }
+
+    func setActive(_ active: Bool, options: AVAudioSession.SetActiveOptions) throws {
+        activations.append(active)
+    }
+}
+
+/// Synchronous main-actor tests: nothing else touching the coordinator can run in between. Each installs a spy and
+/// puts the test host's inert session back.
 @Suite("Playback audio session")
 struct PlaybackAudioSessionTests {
-    @Test("Outside a match the player gets the playback category, which the Ring/Silent switch does not mute")
+    private func withSpy(_ body: (AudioSessionSpy) -> Void) {
+        let previous = AudioSessionCoordinator.session
+        defer { AudioSessionCoordinator.session = previous }
+        let spy = AudioSessionSpy()
+        AudioSessionCoordinator.session = spy
+        body(spy)
+    }
+
+    @Test("Outside a match the player asks for the playback category, which the Ring/Silent switch does not mute")
     func playbackCategoryOutsideAMatch() {
-        AudioSessionCoordinator.deactivate()
-        AudioSessionCoordinator.prepareForPlayback()
-        let session = AVAudioSession.sharedInstance()
-        #expect(session.category == .playback)
-        #expect(session.mode == .moviePlayback)
-        AudioSessionCoordinator.endPlayback()
+        withSpy { spy in
+            AudioSessionCoordinator.deactivate()
+            AudioSessionCoordinator.prepareForPlayback()
+            #expect(spy.category == .playback)
+            #expect(spy.mode == .moviePlayback)
+            #expect(spy.activations == [false], "the category only: AVPlayer activates the session when it plays")
+            AudioSessionCoordinator.endPlayback()
+            #expect(spy.activations == [false, false], "released when the player goes")
+        }
     }
 
     @Test("A live match keeps its session: the player changes neither its category nor its activation")
     func liveMatchKeepsItsSession() {
-        AudioSessionCoordinator.activateForMatch(recording: false)
-        defer { AudioSessionCoordinator.deactivate() }
-        #expect(AudioSessionCoordinator.isMatchLive)
-        AudioSessionCoordinator.prepareForPlayback()
-        AudioSessionCoordinator.endPlayback()
-        let session = AVAudioSession.sharedInstance()
-        #expect(session.category == .playback)
-        #expect(session.mode == .default)  // the match's, not .moviePlayback
-        #expect(AudioSessionCoordinator.isMatchLive)
+        withSpy { spy in
+            AudioSessionCoordinator.activateForMatch(recording: false)
+            defer { AudioSessionCoordinator.deactivate() }
+            #expect(AudioSessionCoordinator.isMatchLive)
+            #expect(spy.category == .playback && spy.mode == .default && spy.activations == [true])
+            AudioSessionCoordinator.prepareForPlayback()
+            AudioSessionCoordinator.endPlayback()
+            #expect(spy.mode == .default, "the match's mode, not .moviePlayback")
+            #expect(spy.activations == [true], "the player neither activates nor releases a live match's session")
+            #expect(AudioSessionCoordinator.isMatchLive)
+        }
+    }
+
+    @Test("A test host never reaches the real audio session")
+    func testHostSessionIsInert() {
+        #expect(AudioSessionCoordinator.session is InertAudioSession)
     }
 }
