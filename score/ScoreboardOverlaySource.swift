@@ -74,11 +74,32 @@ nonisolated final class ScoreboardOverlaySource: Sendable {
         return found
     }
 
-    /// The board for `time` (nil when no cue covers it or its state failed to render), rendering it if needed.
+    /// The board for `time` (nil when no cue covers it or its state failed to render), rendering it if needed. One
+    /// decision under the lock: cached, failed, being rendered (shared), or rendered now. Deciding in two steps let a
+    /// prefetch finish in between and the state render twice.
     func board(at time: CMTime) async -> CIImage? {
-        if case .ready(let board) = boardIfReady(at: time) { return board }
         guard let index = cueIndex(at: time) else { return nil }
-        return await rendering(cues[index].state, prefetch: false).value
+        let state = cues[index].state
+        let found: Found = cache.withLock { cache in
+            if cache.failed.contains(state) { return .board(nil) }
+            if let board = cache.touch(state) { return .board(board) }
+            if let task = cache.inFlight[state] { return .render(task) }
+            let task = Task { await self.render(state, prefetch: false) }
+            cache.inFlight[state] = task
+            return .render(task)
+        }
+        switch found {
+        case .board(let board):
+            if board != nil { prefetch(after: index) }
+            return board
+        case .render(let task):
+            return await task.value
+        }
+    }
+
+    private enum Found {
+        case board(CIImage?)
+        case render(Task<CIImage?, Never>)
     }
 
     // MARK: - Test seams
@@ -108,16 +129,6 @@ nonisolated final class ScoreboardOverlaySource: Sendable {
             else { return }
             cache.prefetching = true
             cache.inFlight[next] = Task { await self.render(next, prefetch: true) }
-        }
-    }
-
-    /// The render of `state` in flight, started if there is none (two frames of one cue share a render).
-    private func rendering(_ state: ReelScoreboardState, prefetch: Bool) -> Task<CIImage?, Never> {
-        cache.withLock { cache in
-            if let task = cache.inFlight[state] { return task }
-            let task = Task { await self.render(state, prefetch: prefetch) }
-            cache.inFlight[state] = task
-            return task
         }
     }
 
