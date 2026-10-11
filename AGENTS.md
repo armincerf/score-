@@ -89,6 +89,7 @@ scoreTests/                 Swift Testing suites (@testable import score)
 scripts/                    xcb.sh (xcodebuild filter), deploy-device.sh (devicectl install), screenshot.sh, sync-xcode-skills.sh, hooks/,
                             testflight.sh (archive + upload), asc.py (App Store Connect API: testers, distribution)
 docs/icons/                 Rendered icon previews (ictool exports)
+docs/screenshots/           Home screen renders (make screenshot output, refresh when the home screen changes)
 .github/workflows/ci.yml    lint (macos-26) + build/test (xcode-27 image)
 ```
 
@@ -205,7 +206,8 @@ make screenshot OUT=.build/shots/home-ax.png NO_BUILD=1 \
   is UIKit's own Dynamic Type override; check at least `AccessibilityL` for truncation.
 - `scripts/screenshot.sh --udid <UDID> --no-build --wait 5 out.png` targets another simulator or
   reuses the last build; `--wait` lengthens the launch-to-capture delay for slow screens.
-- `.build/shots/` is gitignored; copy anything worth keeping into `docs/`.
+- `.build/shots/` is gitignored; the home screen's renders live in `docs/screenshots/` (`sips -Z 1000` copies):
+  refresh them when the home screen changes.
 
 ## Icon
 
