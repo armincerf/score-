@@ -57,6 +57,25 @@ extension WatchConnectivityManager {
         else { return false }
         return sentAt < recordingStart.timeIntervalSince1970 - Self.watchClockSkewAllowance
     }
+
+    /// When a watch command was issued, on the match clock: a tap queued with `transferUserInfo` while the phone was
+    /// out of reach arrives in a burst later, and timing it on arrival would freeze the full video's board through
+    /// those rallies, then jump. Nil (now) without `sentAt` (older watch builds) or a match clock.
+    func watchCommandOffset(_ messageData: WatchMessageData) -> TimeInterval? {
+        guard let sentAt = messageData.sentAt, let start = scoreState.recordingStartTime else { return nil }
+        return Self.commandOffset(
+            sentAt: sentAt, recordingStart: start, now: recordingDuration, notBefore: getPointTimestamps().last ?? 0)
+    }
+
+    /// `sentAt` (seconds since 1970) as an offset from `recordingStart`, kept between `notBefore` (the latest point
+    /// already recorded: the board never moves back in time, and the watch's clock may run a little behind) and
+    /// `now` (the watch's clock may run a little ahead). Pure so it can be unit-tested.
+    nonisolated static func commandOffset(
+        sentAt: TimeInterval, recordingStart: Date, now: TimeInterval, notBefore: TimeInterval
+    ) -> TimeInterval {
+        let tapped = sentAt - recordingStart.timeIntervalSince1970
+        return min(now, max(notBefore, tapped))
+    }
 }
 
 // MARK: - WCSessionDelegate
@@ -183,16 +202,16 @@ extension WatchConnectivityManager: WCSessionDelegate {
         if let command = messageData.command {
             switch command {
             case "incrementP1":
-                self.incrementPlayer1()
+                self.scorePoint(forPlayer: 1, at: watchCommandOffset(messageData))
                 Log.match.debug("Command: incrementP1")
 
             case "incrementP2":
-                self.incrementPlayer2()
+                self.scorePoint(forPlayer: 2, at: watchCommandOffset(messageData))
                 Log.match.debug("Command: incrementP2")
 
             case "highlight":
                 self.playHighlightSound()
-                self.markHighlight()
+                self.markHighlight(at: watchCommandOffset(messageData))
                 Log.match.debug("Command: highlight from watch")
 
             case "endGame":

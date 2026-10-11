@@ -494,7 +494,10 @@ class WatchConnectivityManager: NSObject {
         }
     }
 
-    private func scorePoint(forPlayer player: Int) {
+    /// Scores a point for `player` at match-clock `offset` (nil: now). A watch command passes the time of its tap
+    /// (`watchCommandOffset`), so a point that waited in the watch's queue is placed when it was played.
+    func scorePoint(forPlayer player: Int, at offset: TimeInterval? = nil) {
+        let videoTimestamp = offset ?? recordingDuration
         guard let matchId = currentMatchId else {
             Log.match.debug("No active match")
             return
@@ -511,7 +514,7 @@ class WatchConnectivityManager: NSObject {
                 matchId: matchId,
                 sequenceNumber: try eventStore.getNextSequenceNumber(matchId: matchId),
                 player: player,
-                videoTimestamp: recordingDuration,
+                videoTimestamp: videoTimestamp,
                 gameNumber: currentGameNumber
             )
             try eventStore.append(event: event)
@@ -521,7 +524,7 @@ class WatchConnectivityManager: NSObject {
             } else {
                 scoreState.playerTwoScore += 1
             }
-            recordPoint(forPlayer: player, wasServing: wasServing)
+            recordPoint(forPlayer: player, wasServing: wasServing, at: videoTimestamp)
 
             scoreState.servingPlayer = ServingLogic.calculateCurrentServer(
                 firstServer: scoreState.currentGameFirstServer ?? 1,
@@ -592,10 +595,8 @@ class WatchConnectivityManager: NSObject {
 
     // MARK: - Point Recording
 
-    private func recordPoint(forPlayer player: Int, wasServing: Bool = false) {
+    private func recordPoint(forPlayer player: Int, wasServing: Bool, at videoTimestamp: TimeInterval) {
         guard scoreState.isRecording else { return }
-
-        let videoTimestamp = recordingDuration
 
         // Add to video timestamps for highlight reel
         pointTimestamps.append(videoTimestamp)
@@ -630,7 +631,8 @@ class WatchConnectivityManager: NSObject {
 
     // MARK: - Highlight Marking
 
-    func markHighlight() {
+    /// Marks a highlight at match-clock `offset` (nil: now; a watch command passes the time of its tap).
+    func markHighlight(at offset: TimeInterval? = nil) {
         Log.match.debug(
             "markHighlight() called - isRecording=\(self.scoreState.isRecording), matchId=\(self.currentMatchId?.uuidString ?? "nil")"
         )
@@ -645,8 +647,8 @@ class WatchConnectivityManager: NSObject {
             return
         }
 
-        // Get the current video timestamp when highlight button is pressed
-        let highlightTimestamp = recordingDuration
+        // The video timestamp when the highlight button was pressed
+        let highlightTimestamp = offset ?? recordingDuration
 
         // Find the timestamp of the last scored point (start of highlight clip)
         let lastPointTimestamp = pointTimestamps.last ?? 0
@@ -808,15 +810,17 @@ class WatchConnectivityManager: NSObject {
 
     // MARK: - Video Export
 
-    /// Exports the full match (all segments concatenated, upright) and, when highlights exist, the
-    /// highlight reel. Returns nil for whatever could not be produced.
+    /// Exports the full match (all segments concatenated, upright, with the match's scoreboard) and, when
+    /// highlights exist, the highlight reel (cut from the same segments, with its own scoreboard). Returns nil for
+    /// whatever could not be produced.
     func exportMatchVideos(
         progressHandler: @escaping MediaExportService.ProgressHandler = { _ in }
     ) async -> (fullVideo: URL?, highlightReel: URL?) {
         guard let matchId = currentMatchId else { return (nil, nil) }
         let timeline = await loadTimeline()
+        // loadTimeline keeps only segments that resolve, so these line up with timeline.segments
         let segmentURLs = timeline.segments.compactMap { VideoStore.resolve($0.fileReference) }
-        guard !segmentURLs.isEmpty else {
+        guard !segmentURLs.isEmpty, segmentURLs.count == timeline.segments.count else {
             Log.match.warning("No recorded footage to export")
             return (nil, nil)
         }
@@ -827,39 +831,18 @@ class WatchConnectivityManager: NSObject {
         // Which way up each segment really is, from the pictures (Vision body pose; logged per segment)
         let corrections = await VideoOrientationDetector.corrections(for: segmentURLs)
         Log.match.info("🧭 Orientation corrections per segment: \(corrections.map(\.rawValue), privacy: .public)")
+        let footage = MatchFootage(segments: segmentURLs, corrections: corrections, timeline: timeline)
 
         let fullURL = VideoStore.fileURL(matchId: matchId, kind: .full)
-        var fullVideo: URL?
-        // The turn the reel's source still needs: none once the full video is exported upright
-        var sourceCorrection = VideoRotationCorrection.none
-        do {
-            let result = try await MediaExportService.exportFullVideo(
-                segments: segmentURLs,
-                corrections: corrections,
-                to: fullURL,
-                quality: quality,
-                progressHandler: { progress in progressHandler(progress * 0.5) }
-            )
-            fullVideo = result.outputURL
-            Log.match.info("✅ Full video exported: \(result.outputURL.lastPathComponent)")
-        } catch {
-            Log.match.error("❌ Full video export failed: \(error.localizedDescription)")
-            if segmentURLs.count == 1 {  // keep the raw file as the full video; the reel still applies its correction
-                fullVideo = segmentURLs[0]
-                sourceCorrection = corrections.first ?? .none
-            }
-        }
-
+        let fullVideo = await exportFullVideo(
+            footage, to: fullURL, quality: quality, progressHandler: { progress in progressHandler(progress * 0.5) })
+        // The reel is cut from the camera's segments, not from the full video, so the full video's board never
+        // shows in it and its footage is encoded once
         let highlightReel = await exportHighlightReel(
-            matchId: matchId,
-            from: fullVideo,
-            correction: sourceCorrection,
-            timeline: timeline,
-            quality: quality,
-            progressHandler: { progress in progressHandler(0.5 + progress * 0.5) }
-        )
+            matchId: matchId, footage: footage, quality: quality,
+            progressHandler: { progress in progressHandler(0.5 + progress * 0.5) })
 
-        // Raw segments are no longer needed once the full video has been written
+        // Raw segments are no longer needed once the full video has been written (and the reel cut from them)
         if fullVideo == fullURL {
             for url in segmentURLs {
                 try? FileManager.default.removeItem(at: url)
@@ -867,6 +850,41 @@ class WatchConnectivityManager: NSObject {
         }
         progressHandler(1.0)
         return (fullVideo, highlightReel)
+    }
+
+    /// The recorded segments of a match, the detected correction of each and where they sit on the match clock.
+    private struct MatchFootage {
+        let segments: [URL]
+        let corrections: [VideoRotationCorrection]
+        let timeline: RecordingTimeline
+    }
+
+    /// Exports the full video with the match's scoreboard (once more without it if that fails). When that fails
+    /// too, a single segment is kept as the full video as recorded (no board, no correction). Returns nil when there
+    /// is no full video.
+    private func exportFullVideo(
+        _ footage: MatchFootage, to output: URL, quality: MediaExportService.ExportQuality,
+        progressHandler: @escaping MediaExportService.ProgressHandler
+    ) async -> URL? {
+        let board = MatchScoreboardTimeline.cues(
+            match: ReelScoreboardTimeline(scoreState: scoreState), recording: footage.timeline,
+            videoDuration: footage.timeline.totalDuration)
+        Log.match.info(
+            "🎬 Match scoreboard: \(board.count) cue(s) over \(Int(footage.timeline.totalDuration))s, \(Set(board.map(\.state)).count) board(s)"
+        )
+        let result = await exportRetryingWithoutBoard(board, what: "Full video", progressHandler: progressHandler) {
+            cues, progress in
+            try await MediaExportService.exportFullVideo(
+                segments: footage.segments, corrections: footage.corrections, scoreboard: cues, to: output,
+                quality: quality, progressHandler: progress)
+        }
+        if let result {
+            Log.match.info("✅ Full video exported: \(result.outputURL.lastPathComponent), \(result.duration)s")
+            return result.outputURL
+        }
+        guard footage.segments.count == 1 else { return nil }
+        Log.match.warning("⚠️ Keeping the raw recording as the full video")
+        return footage.segments[0]
     }
 
     /// Segments that exist on disk, with their durations, in capture order.
@@ -890,75 +908,75 @@ class WatchConnectivityManager: NSObject {
         return RecordingTimeline(segments: segments)
     }
 
-    /// Cuts the marked highlight clips (wall-clock ranges) out of the exported full video, with the broadcast
-    /// scoreboard burned in. `correction` is the turn `source` still needs (a raw segment kept as the full video).
-    /// Returns nil when there are no clips with footage or the export fails.
+    /// Cuts the marked highlight clips (wall-clock ranges) out of the recorded segments, each piece turned by its
+    /// segment's correction, with the reel's broadcast scoreboard burned in. Returns nil when there are no clips with
+    /// footage or the export fails.
     private func exportHighlightReel(
-        matchId: UUID,
-        from source: URL?,
-        correction: VideoRotationCorrection,
-        timeline: RecordingTimeline,
-        quality: MediaExportService.ExportQuality,
+        matchId: UUID, footage: MatchFootage, quality: MediaExportService.ExportQuality,
         progressHandler: @escaping MediaExportService.ProgressHandler
     ) async -> URL? {
-        guard let source else { return nil }
         // A highlight marked after the final point is still pending; it belongs in the reel too
         let marked = scoreState.highlightClips + (scoreState.pendingHighlight.map { [$0] } ?? [])
-        // Reel order = marked order: the clips (video time) and the scoreboard's view of them (wall clock) line up
-        var clips: [MediaExportService.HighlightClipInfo] = []
-        var reelClips: [ReelClip] = []
-        for clip in marked {
-            guard let range = timeline.videoRange(wallStart: clip.startTimestamp, wallEnd: clip.endTimestamp) else {
-                Log.match.warning("⚠️ Highlight \(clip.id) has no footage (recording was paused)")
-                continue
-            }
-            clips.append(
-                MediaExportService.HighlightClipInfo(
-                    startTimestamp: range.lowerBound, endTimestamp: range.upperBound, player: clip.player,
-                    gameNumber: clip.gameNumber))
-            reelClips.append(ReelClip(highlight: clip, reelDuration: range.upperBound - range.lowerBound))
+        // Reel order = marked order: the pieces (segment time) and the scoreboard's view of them (wall clock) line up
+        let plan = MediaExportService.reelPlan(
+            for: marked, timeline: footage.timeline, segments: footage.segments, corrections: footage.corrections)
+        for clip in plan.withoutFootage {
+            Log.match.warning("⚠️ Highlight \(clip.id) has no footage (recording was paused)")
         }
-        guard !clips.isEmpty else {
+        guard !plan.pieces.isEmpty else {
             Log.match.debug("No highlight footage - only saving full video")
             return nil
         }
-        Log.match.info("🎬 Generating highlight reel with \(clips.count) of \(marked.count) highlights")
+        Log.match.info(
+            "🎬 Generating highlight reel with \(plan.clips.count) of \(marked.count) highlights, \(plan.pieces.count) piece(s)"
+        )
 
-        let cues = ReelScoreboardTimeline(scoreState: scoreState).cues(for: reelClips)
-        let scoreboard: [OverlayCue]
-        do {
-            scoreboard = try await MediaExportService.scoreboardOverlays(cues, forReelFrom: source)
-        } catch {
-            Log.match.error("❌ Reel scoreboard not rendered, exporting without it: \(error.localizedDescription)")
-            scoreboard = []
-        }
-        Log.match.info("🎬 Reel scoreboard: \(cues.count) cue(s), \(scoreboard.count) rendered")
+        let scoreboard = ReelScoreboardTimeline(scoreState: scoreState).cues(for: plan.clips)
+        Log.match.info("🎬 Reel scoreboard: \(scoreboard.count) cue(s)")
 
         let output = VideoStore.fileURL(matchId: matchId, kind: .highlights)
-        return await exportReel(scoreboard: scoreboard) { board in
+        let result = await exportRetryingWithoutBoard(
+            scoreboard, what: "Highlight reel", progressHandler: progressHandler
+        ) { board, progress in
             try await MediaExportService.exportHighlightReel(
-                from: source, to: output, clips: clips, scoreboard: board, correction: correction, quality: quality,
-                progressHandler: progressHandler)
+                pieces: plan.pieces, to: output, scoreboard: board, quality: quality, progressHandler: progress)
         }
+        if let result { Log.match.info("✅ Highlight reel saved: \(result.outputURL.lastPathComponent)") }
+        return result?.outputURL
     }
 
-    /// Runs `export` with `scoreboard` and, when that fails, once more without it, so a failure in the board's Core
-    /// Image composition costs the board rather than the whole reel. Returns the reel's URL, or nil.
-    private func exportReel(
-        scoreboard: [OverlayCue], _ export: ([OverlayCue]) async throws -> MediaExportService.ExportResult
-    ) async -> URL? {
+    /// Runs `export` with `scoreboard` and, when that fails in a way the board may have caused, once more without
+    /// it, so a failure in drawing the board costs the board rather than the whole video. A full disk, an
+    /// interruption or a cancellation fails the plain export just the same and is not retried. The retry's progress
+    /// fills what is left of the bar, so it never moves back. Returns nil when the export fails.
+    private func exportRetryingWithoutBoard(
+        _ scoreboard: [ReelScoreboardCue], what: String, progressHandler: @escaping MediaExportService.ProgressHandler,
+        _ export: ([ReelScoreboardCue], @escaping MediaExportService.ProgressHandler) async throws ->
+            MediaExportService.ExportResult
+    ) async -> MediaExportService.ExportResult? {
+        let reached = ExportProgressMark()
         do {
-            let result = try await export(scoreboard)
-            Log.match.info("✅ Highlight reel saved: \(result.outputURL.lastPathComponent)")
-            return result.outputURL
+            return try await export(scoreboard) { progress in
+                reached.value = max(reached.value, progress)
+                progressHandler(progress)
+            }
         } catch {
-            guard !scoreboard.isEmpty else {
-                Log.match.error("❌ Highlight export failed: \(error.localizedDescription)")
+            guard !scoreboard.isEmpty, MediaExportService.boardMayHaveCaused(error) else {
+                Log.match.error("❌ \(what, privacy: .public) export failed: \(error.localizedDescription)")
                 return nil
             }
             Log.match.warning(
-                "⚠️ Highlight export with the scoreboard failed, retrying without it: \(error.localizedDescription)")
-            return await exportReel(scoreboard: [], export)
+                "⚠️ \(what, privacy: .public) export with the scoreboard failed, retrying without it: \(error.localizedDescription)"
+            )
+            let floor = reached.value
+            do {
+                return try await export([]) { progress in
+                    progressHandler(MediaExportService.retryProgress(progress, after: floor))
+                }
+            } catch {
+                Log.match.error("❌ \(what, privacy: .public) export failed: \(error.localizedDescription)")
+                return nil
+            }
         }
     }
 
@@ -1396,4 +1414,9 @@ class WatchConnectivityManager: NSObject {
             matchHistory: scoreState.matchHistory
         )
     }
+}
+
+/// How far an export's progress has got (0...1), so a retry can carry on from there.
+private final class ExportProgressMark {
+    var value = 0.0
 }

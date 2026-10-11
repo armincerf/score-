@@ -3,14 +3,15 @@
 //  scoreTests
 //
 //  End-to-end proof that the real highlight reel export carries the broadcast scoreboard: a fabricated match is
-//  turned into cues by ReelScoreboardTimeline, rendered by MediaExportService.scoreboardOverlays, burned into a
-//  reel cut from a synthetic video by MediaExportService.exportHighlightReel, and frames read back out of the reel
+//  turned into cues by ReelScoreboardTimeline, burned (rendered lazily by ScoreboardOverlaySource) into a reel cut
+//  from a synthetic video by MediaExportService.exportHighlightReel, and frames read back out of the reel
 //  are checked pixel by pixel. The frames land next to ReelOverlayTests' (see `ReelFrames.outputDirectory`) as
 //  scoreboard-reel-*.png and board-1080p.png / board-2160p.png so a person can look at them.
 //
 
 import AVFoundation
 import CoreGraphics
+import CoreImage
 import CoreMedia
 import Foundation
 import Testing
@@ -53,7 +54,7 @@ struct ReelExportTests {
         let cues: [ReelScoreboardCue]
     }
 
-    /// Exports the reel the way WatchConnectivityManager does: timeline -> rendered overlays -> export.
+    /// Exports the reel the way WatchConnectivityManager does: timeline -> cues -> export (boards rendered lazily).
     private static func exportReel() async throws -> Export {
         let directory = ReelFrames.outputDirectory
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -68,10 +69,8 @@ struct ReelExportTests {
                 gameNumber: clip.gameNumber)
         }
         let cues = match.cues(for: zip(clips, infos).map { ReelClip(highlight: $0, reelDuration: $1.duration) })
-        let overlays = try await MediaExportService.scoreboardOverlays(cues, forReelFrom: source)
-        #expect(overlays.count == cues.count)
         let result = try await MediaExportService.exportHighlightReel(
-            from: source, to: reelURL, clips: infos, scoreboard: overlays, quality: .hd720p)
+            from: source, to: reelURL, clips: infos, scoreboard: cues, quality: .hd720p)
         return Export(source: source, reel: result.outputURL, cues: cues)
     }
 
@@ -161,7 +160,7 @@ struct ReelExportTests {
     }
 
     @Test("The board scales with the video height at 1080p and 4K", arguments: [1080, 2160])
-    func boardScalesWithHeight(height: Int) throws {
+    func boardScalesWithHeight(height: Int) async throws {
         let videoSize = CGSize(width: height * 16 / 9, height: height)
         let layout = ReelScoreboardLayout(videoSize: videoSize)
         let reference = ReelScoreboardLayout(videoSize: Self.videoSize)
@@ -173,15 +172,19 @@ struct ReelExportTests {
         let state = ReelScoreboardState(
             playerOneName: "Alex", playerTwoName: "Lucio", playerOneGames: 2, playerTwoGames: 1, playerOnePoints: 10,
             playerTwoPoints: 9, server: 2, pointWonBy: nil)
-        let range = CMTimeRange(start: .zero, duration: ReelFrames.seconds(1))
-        let overlays = MediaExportService.scoreboardOverlays(
-            [ReelScoreboardCue(timeRange: range, state: state), ReelScoreboardCue(timeRange: range, state: state)],
-            videoSize: videoSize)
-        try #require(overlays.count == 2)
-        #expect(overlays[0].image === overlays[1].image, "identical states share one bitmap")
-        #expect(overlays[0].origin == layout.origin)
+        let cues = [0, 1].map { second in
+            ReelScoreboardCue(
+                timeRange: CMTimeRange(start: ReelFrames.seconds(Double(second)), duration: ReelFrames.seconds(1)),
+                state: state)
+        }
+        let source = ScoreboardOverlaySource(cues: cues, videoSize: videoSize)
+        let first = try #require(await source.board(at: ReelFrames.seconds(0.5)))
+        let second = try #require(await source.board(at: ReelFrames.seconds(1.5)))
+        #expect(source.renderCount == 1, "identical states share one bitmap")
+        #expect(first.extent == second.extent)
+        #expect(first.extent.origin == layout.origin)
 
-        let image = overlays[0].image
+        let image = try #require(ReelScoreboardRenderer.render(state, layout: layout))
         #expect(CGFloat(image.width) == layout.panelSize.width && CGFloat(image.height) == layout.panelSize.height)
         try ReelFrames.savePNG(image, name: "board-\(height)p")
         let pixels = ReelPixels(image)
@@ -235,7 +238,7 @@ struct ReelExportSourceTests {
     /// One 4 s clip from 1 s (0-1), player one wins the rally (1-1 at 5.2 s): two cues (score, then the lit row).
     private static func cues(
         for source: URL
-    ) async throws -> (clip: MediaExportService.HighlightClipInfo, overlays: [OverlayCue]) {
+    ) -> (clip: MediaExportService.HighlightClipInfo, cues: [ReelScoreboardCue]) {
         let highlight = HighlightClip(startTimestamp: 1, endTimestamp: 5, player: 1, gameNumber: 0)
         let timeline = ReelScoreboardTimeline(
             playerOneName: "Alex", playerTwoName: "Lucio", games: [],
@@ -244,9 +247,8 @@ struct ReelExportSourceTests {
             ],
             currentGameFirstServer: 1)
         let cues = timeline.cues(for: [ReelClip(highlight: highlight, reelDuration: 4)])
-        let overlays = try await MediaExportService.scoreboardOverlays(cues, forReelFrom: source)
         let clip = MediaExportService.HighlightClipInfo(startTimestamp: 1, endTimestamp: 5, player: 1, gameNumber: 0)
-        return (clip, overlays)
+        return (clip, cues)
     }
 
     @Test("Without cues a silent source exports the plain reel, as before the scoreboard", .timeLimit(.minutes(3)))
@@ -254,7 +256,7 @@ struct ReelExportSourceTests {
         let source = try #require(
             await MockVideoGenerator.generateMockVideo(
                 duration: 6, to: Self.directory.appendingPathComponent("scoreboard-plain-source.mov")))
-        let plan = try await Self.cues(for: source)
+        let plan = Self.cues(for: source)
         let reel = try await MediaExportService.exportHighlightReel(
             from: source, to: Self.directory.appendingPathComponent("scoreboard-plain-reel.mov"), clips: [plan.clip],
             scoreboard: [], quality: .hd720p)
@@ -282,10 +284,10 @@ struct ReelExportSourceTests {
         let sourceAudio = try await AVURLAsset(url: source).loadTracks(withMediaType: .audio)
         try #require(!sourceAudio.isEmpty, "the fixture needs an audio track")
 
-        let plan = try await Self.cues(for: source)
+        let plan = Self.cues(for: source)
         let reelURL = Self.directory.appendingPathComponent("scoreboard-sound-reel.mov")
         let reel = try await MediaExportService.exportHighlightReel(
-            from: source, to: reelURL, clips: [plan.clip], scoreboard: plan.overlays, quality: .hd720p)
+            from: source, to: reelURL, clips: [plan.clip], scoreboard: plan.cues, quality: .hd720p)
 
         let reelAsset = AVURLAsset(url: reel.outputURL)
         #expect(try await !reelAsset.loadTracks(withMediaType: .audio).isEmpty, "the reel keeps the sound")
@@ -297,8 +299,8 @@ struct ReelExportSourceTests {
         #expect(ReelPixels.isGold(ReelPixels(frame).rgb(at: corner)), "the board is drawn")
     }
 
-    @Test("A source stored rotated keeps the plain reel, upright, instead of a sideways one", .timeLimit(.minutes(3)))
-    func rotatedSourceSkipsTheBoard() async throws {
+    @Test("A source stored rotated gives an upright reel with the board on it", .timeLimit(.minutes(3)))
+    func rotatedSourceGetsTheBoard() async throws {
         let landscape = try #require(
             await MockVideoGenerator.generateMockVideo(
                 duration: 6, to: Self.directory.appendingPathComponent("scoreboard-unrotated.mov")))
@@ -311,11 +313,11 @@ struct ReelExportSourceTests {
         let stored = try #require(try await sourceAsset.loadTracks(withMediaType: .video).first)
         try #require(!(try await stored.load(.preferredTransform)).isIdentity, "the fixture must be stored rotated")
 
-        let plan = try await Self.cues(for: source)
-        #expect(plan.overlays.count == 2, "the board is rendered for the upright 720x1280 frame")
+        let plan = Self.cues(for: source)
+        #expect(plan.cues.count == 2, "the score, then the lit row")
         let reelURL = Self.directory.appendingPathComponent("scoreboard-rotated-reel.mov")
         let reel = try await MediaExportService.exportHighlightReel(
-            from: source, to: reelURL, clips: [plan.clip], scoreboard: plan.overlays, quality: .hd720p)
+            from: source, to: reelURL, clips: [plan.clip], scoreboard: plan.cues, quality: .hd720p)
 
         let frame = try await ReelFrames.frame(of: reel.outputURL, at: 1)
         try ReelFrames.savePNG(frame, name: "scoreboard-rotated-reel-1.0s")
@@ -326,8 +328,10 @@ struct ReelExportSourceTests {
         // The picture is there (a transform pushing it off the canvas leaves a black frame)
         let brightness = pixels.meanBrightness(in: CGRect(origin: .zero, size: size))
         #expect(brightness > 20, "the frame should show the video, mean brightness \(brightness)")  // measured 51.7
+        // The board is drawn over the upright portrait frame (before the compositor drew the geometry itself, a
+        // source not stored upright got the plain reel)
         let goldInBox = pixels.count(in: layout.gamesBox(row: 0, in: size), where: ReelPixels.isGold)
-        #expect(goldInBox == 0, "no board over a source that is not stored upright")
+        #expect(goldInBox > 200, "the board's games box is drawn over the portrait reel (\(goldInBox) gold pixels)")
     }
 
     // MARK: - Fixtures
@@ -392,20 +396,20 @@ extension CGRect {
 // MARK: - A source that still needs a correction
 
 extension ReelExportSourceTests {
-    /// The raw camera segment kept as the full video when the full export fails carries the detector's correction:
-    /// the reel must turn it (and leave the board out, which the Core Image composition cannot turn).
+    /// A raw camera segment carries the detector's correction: the reel must turn it, and the board (when there are
+    /// cues) is drawn upright over the turned picture.
     @Test(
-        "A reel cut with a correction comes out turned, without the board", .timeLimit(.minutes(3)),
+        "A reel cut with a correction comes out turned, with the board when there are cues", .timeLimit(.minutes(3)),
         arguments: [false, true])
     func correctedSourceIsTurned(withCues: Bool) async throws {
         let source = try #require(
             await MockVideoGenerator.generateMockVideo(
                 duration: 6, to: Self.directory.appendingPathComponent("scoreboard-corrected-source.mov")))
-        let plan = try await Self.cues(for: source)
+        let plan = Self.cues(for: source)
         let name = withCues ? "scoreboard-corrected-cues-reel" : "scoreboard-corrected-reel"
         let reel = try await MediaExportService.exportHighlightReel(
             from: source, to: Self.directory.appendingPathComponent("\(name).mov"), clips: [plan.clip],
-            scoreboard: withCues ? plan.overlays : [], correction: .upsideDown180, quality: .hd720p)
+            scoreboard: withCues ? plan.cues : [], correction: .upsideDown180, quality: .hd720p)
         #expect(abs(reel.duration - 4) < 0.05)
 
         // Reel 1 s is 1 s into the clip, which starts at 1 s of the source
@@ -422,7 +426,11 @@ extension ReelExportSourceTests {
         let size = CGSize(width: image.width, height: image.height)
         let box = ReelScoreboardLayout(videoSize: size).gamesBox(row: 0, in: size)
         let gold = ReelPixels(image).count(in: box, where: ReelPixels.isGold)
-        #expect(gold == 0, "no board over a turned reel")
+        if withCues {
+            #expect(gold > 200, "the board is drawn over the turned reel (\(gold) gold pixels)")
+        } else {
+            #expect(gold == 0, "no board without cues")
+        }
         try OrientationFrames.note(
             "\(name): \(image.width)x\(image.height), half-turn recall \(turned), unturned \(unturned), gold \(gold)",
             file: "\(name).txt")

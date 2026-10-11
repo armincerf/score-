@@ -59,4 +59,44 @@ struct RecordingTimelineTests {
         #expect(none.videoTime(forWallOffset: 42) == 0 && none.totalDuration == 0)
         #expect(none.videoRange(wallStart: 0, wallEnd: 10) == nil)
     }
+
+    // MARK: - Video ranges back onto the segments' files
+
+    @Test("A range inside one segment is one stretch of that segment's file")
+    func rangeInsideASegment() {
+        #expect(
+            timeline.segmentRanges(videoStart: 70, videoEnd: 75)
+                == [SegmentRange(segmentIndex: 1, start: 10, end: 15)])
+        #expect(
+            timeline.segmentRanges(videoStart: 5, videoEnd: 9) == [SegmentRange(segmentIndex: 0, start: 5, end: 9)])
+    }
+
+    @Test("A range across a segment boundary is two stretches, in order")
+    func rangeAcrossABoundary() {
+        // Video 58-63: the last 2 s of a.mov, then the first 3 s of b.mov
+        let ranges = timeline.segmentRanges(videoStart: 58, videoEnd: 63)
+        #expect(
+            ranges == [
+                SegmentRange(segmentIndex: 0, start: 58, end: 60), SegmentRange(segmentIndex: 1, start: 0, end: 3),
+            ])
+        #expect(ranges.map(\.duration).reduce(0, +) == 5)
+    }
+
+    @Test("A range ending on a boundary has no sliver of the next segment; an empty range has no stretch")
+    func boundariesAndEmpty() {
+        #expect(
+            timeline.segmentRanges(videoStart: 55, videoEnd: 60)
+                == [SegmentRange(segmentIndex: 0, start: 55, end: 60)])
+        #expect(timeline.segmentRanges(videoStart: 30, videoEnd: 30).isEmpty)
+        #expect(timeline.segmentRanges(videoStart: 100, videoEnd: 120).isEmpty, "past the footage")
+    }
+
+    @Test("A wall-clock highlight maps to video time and back onto the files it was recorded in")
+    func highlightAcrossSegments() throws {
+        // Wall 60-95: a.mov from 58 s to its end, the 30 s gap (no footage), then b.mov's first 3 s
+        let video = try #require(timeline.videoRange(wallStart: 60, wallEnd: 95))
+        let ranges = timeline.segmentRanges(videoStart: video.lowerBound, videoEnd: video.upperBound)
+        #expect(ranges.map(\.segmentIndex) == [0, 1])
+        #expect(ranges.first?.start == 58 && ranges.last?.end == 3)
+    }
 }

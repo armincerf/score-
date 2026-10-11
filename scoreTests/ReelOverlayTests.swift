@@ -2,8 +2,8 @@
 //  ReelOverlayTests.swift
 //  scoreTests
 //
-//  End-to-end proof that the reel scoreboard is burned into exported frames: a synthetic video is exported
-//  through ReelOverlayComposer and frames are read back out of the exported file and checked pixel by pixel.
+//  End-to-end proof that the scoreboard is burned into exported frames: a synthetic video is exported through
+//  FrameCompositor with two cues and frames are read back out of the exported file and checked pixel by pixel.
 //  The frames are also written as PNGs (see `ReelFrames.outputDirectory`) so a person can look at them.
 //
 
@@ -66,7 +66,7 @@ struct ReelOverlayTests {
         #expect(panelAlpha > 150 && panelAlpha < 255, "the panel should be translucent, alpha \(panelAlpha)")
     }
 
-    /// Source video and the reel exported with two scoreboard cues (0.5-2 s "before", 2-3.5 s "after").
+    /// Source video and the video exported with two scoreboard cues (0.5-2 s "before", 2-3.5 s "after").
     private struct SpikeExport {
         let source: URL
         let reel: URL
@@ -82,23 +82,16 @@ struct ReelOverlayTests {
         let source = try #require(await MockVideoGenerator.generateMockVideo(duration: 4, to: sourceURL))
 
         let layout = ReelScoreboardLayout(videoSize: videoSize)
-        let before = try #require(ReelScoreboardRenderer.render(state(points: 5, 3, server: 1), layout: layout))
-        let after = try #require(
-            ReelScoreboardRenderer.render(state(points: 6, 3, server: 2, pointWonBy: 1), layout: layout))
         let cues = [
-            OverlayCue(
+            ReelScoreboardCue(
                 timeRange: CMTimeRange(start: ReelFrames.seconds(0.5), duration: ReelFrames.seconds(1.5)),
-                image: before,
-                origin: layout.origin),
-            OverlayCue(
-                timeRange: CMTimeRange(start: ReelFrames.seconds(2), duration: ReelFrames.seconds(1.5)), image: after,
-                origin: layout.origin),
+                state: state(points: 5, 3, server: 1)),
+            ReelScoreboardCue(
+                timeRange: CMTimeRange(start: ReelFrames.seconds(2), duration: ReelFrames.seconds(1.5)),
+                state: state(points: 6, 3, server: 2, pointWonBy: 1)),
         ]
-        let asset = AVURLAsset(url: source)
-        let composition = try await ReelOverlayComposer.videoComposition(for: asset, cues: cues)
-        let session = try #require(AVAssetExportSession(asset: asset, presetName: AVAssetExportPreset1280x720))
-        session.videoComposition = composition
-        try await session.export(to: outputURL, as: .mov)
+        _ = try await MediaExportService.exportFullVideo(
+            segments: [source], scoreboard: cues, to: outputURL, quality: .hd720p)
         return SpikeExport(source: source, reel: outputURL, layout: layout)
     }
 

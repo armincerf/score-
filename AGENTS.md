@@ -66,14 +66,16 @@ score/                      iOS app target
   WatchConnectivityManager.swift           Phone hub: match lifecycle, scoring, recording, export, AI (see "Known debt")
   WatchConnectivityManager+WCSession.swift WCSessionDelegate: actionId dedupe + command dispatch from the watch
   VideoRecordingManager.swift Capture session + movie output; CaptureState (interrupted/failed...), segment callbacks, rotation coordinator
-  RecordingTimeline.swift     RecordingSegment + wall-clock offset -> concatenated-video time mapping (gaps clamp)
+  RecordingTimeline.swift     RecordingSegment + wall-clock offset -> concatenated-video time mapping (gaps clamp); video range -> segment-file ranges
   VideoRotationCorrection.swift Extra clockwise turn a segment needs beyond its metadata (transform, EXIF orientation) + OrientationDecision
   VideoOrientationDetector.swift Samples frames, scores upright people per orientation with Vision body pose, decides; BodyPoseEvidence
   AudioSessionCoordinator.swift Owns AVAudioSession: a match (play-and-record to speaker; released at match end), else the detail player (.playback)
-  MediaExportService.swift    Concatenates segments upright (per-track preferredTransform) + cuts the reel (scoreboard burned in); export(to:as:) with progress
+  MediaExportService.swift    Full video (segments upright, letterboxed, match board) + reel (pieces of the segments, reel board); reelPlan; export(to:as:) with progress
   ReelScoreboard.swift        Broadcast-style scoreboard for the reel: state, pixel layout per video size, SwiftUI view, ImageRenderer
   ReelScoreboardTimeline.swift Pure: match data + reel clips -> board states with reel-time ranges (score at clip start, celebration)
-  ReelOverlayComposer.swift   Burns time-ranged bitmaps (the scoreboard) into a video composition per frame with Core Image
+  MatchScoreboardTimeline.swift Pure: match data + recording timeline -> contiguous board cues over the full video, point by point
+  ScoreboardOverlaySource.swift Lazy board bitmaps for an export: cue lookup by time, 16-board LRU cache, main-actor render, prefetch
+  FrameCompositor.swift       The one custom video compositor (Core Image): per-piece upright/letterbox geometry + the board
   MockVideoGenerator.swift    Synthetic video for the simulator (no camera); 1280x720 unless given a size
   VideoTransferable.swift     ShareLink/Transferable wrapper for exported videos
   VideoStore.swift            Application Support/Videos: per-match file names, stored references, legacy URL resolve
@@ -120,7 +122,9 @@ docs/screenshots/           Home screen, Stats page and reel-player renders (mak
   phone applies each `actionId` once across both paths (`receiveFromWatch`, last 200 ids)
   and drops commands whose `sentAt` predates the match's `recordingStartTime` (left in the
   queue from an earlier match); commands without them (older watch builds) are always
-  applied. `updateApplicationContext`
+  applied. A point or highlight from the watch is placed on the match clock at its `sentAt`
+  (`watchCommandOffset`, kept between the previous point and now), not on arrival, so taps
+  that waited in the queue keep their rally's time. `updateApplicationContext`
   is phone -> watch only: the phone pushes the full state on every change (`sendScore()`),
   and `highlightConfirmed` immediately after a highlight.
 - **Every scoring action is an event** appended through `EventStore` (sequence-numbered,
@@ -240,14 +244,16 @@ scripts/screenshot.sh --no-build --wait 20 --args "-seedSampleMatches -seedReel 
   opens the Stats page as the home screen appears (the head-to-head's matches and the player pages are below
   it: scroll or tap with UI automation, e.g. the "Lucio won" segment); `-showNewMatchSheet` opens the
   new-match sheet on the home screen; `-seedReel` (with `-seedSampleMatches`) writes a 20 s mock recording
-  as the newest match's full video and runs the real highlight reel export with the scoreboard (four 4.5 s
-  clips scored from that match's highlights); `-seedReelPortrait` does the same with a 720x1280 recording;
+  as the newest match's raw segment and runs both real exports from it: the full video with the match board
+  (the match's first game, its points spread over the 20 s, then the games box for game two) and the highlight
+  reel with the reel board (four 4.5 s clips scored from that match's highlights); `-seedReelPortrait` does the
+  same with a 720x1280 recording;
   `-landscapeAfter <seconds>` turns the interface to landscape that long after the home screen first appears
   (`requestGeometryUpdate`; the simulator cannot be rotated from the shell): with 25, start the reel first to see
   the turn open the full-screen player. In landscape, xcodebuildmcp's ref taps land in the wrong place; `axe tap
   --label <label> --udid <udid>` works (show the controls with `axe tap --label Video` first);
-  `-openLatestMatch` opens the newest match's detail screen once that export has finished (about 2 s on the
-  simulator). A landscape reel's player is above the fold; a portrait one (420 pt tall) is not: scroll it into
+  `-openLatestMatch` opens the newest match's detail screen once both exports have finished (a few seconds on
+  the simulator; give `--wait 25`). "Full match" in the player's picker shows the full video with its board. A landscape reel's player is above the fold; a portrait one (420 pt tall) is not: scroll it into
   view with any UI automation (for example xcodebuildmcp's `ui-automation snapshot-ui` and `ui-automation swipe
   --within-element-ref <scroll ref> --direction up --distance 0.45`, if installed; `make setup` does not install
   it), then capture with `xcrun simctl io <udid> screenshot out.png`. To show the player's controls use a
@@ -278,21 +284,44 @@ scripts/screenshot.sh --no-build --wait 20 --args "-seedSampleMatches -seedReel 
   empty or failed segment follows its neighbours instead of keeping `.none` while they turn a quarter. As a
   safety net `makeComposition` scales a piece whose upright size differs from the render size (the first
   piece's) to fit and centres it (`MediaExportService.fitting`): a mismatch letterboxes, it never crops.
-- When the full export fails for a one-segment match the raw segment is kept as the full video and the reel is
-  cut from it with that segment's correction (`exportHighlightReel(..., correction:)`); a turned reel gets no
-  board (the Core Image composition shows frames as stored; warning logged). If the reel export with the board
-  throws, the manager retries once without it.
+- **Both exports draw a board.** The full video carries the match board (`MatchScoreboardTimeline`: 0-0 with
+  game 1's first server, each point lit for 1.2 s or until the next point, then the next server, deuce included;
+  after a game's last point the lit final score, then the games box, 0-0 and the next first server, nobody once
+  the games decide the best of five (the app's state still names one); untimed points left out, out-of-order
+  times clamped). The reel carries its own (`ReelScoreboardTimeline`).
+- **The reel is cut from the raw segments**, not from the full video, so the full video's board never shows in
+  it and its footage is encoded once: `MediaExportService.reelPlan` maps each highlight's wall-clock range through
+  the timeline into video time and back onto the segment files (`RecordingTimeline.segmentRanges`; a clip across
+  a segment boundary is two pieces), each piece with its segment's correction. Segments are deleted after both
+  exports, and only when the full video was written. If an export with its board throws, the manager retries it
+  once without the board, unless the failure is one the board cannot cause (`MediaExportService.boardMayHaveCaused`:
+  disk full, interrupted, cancelled), the retry's progress filling the rest of the bar; if the full export still fails for a one-segment match, the raw segment is kept as the
+  full video as recorded (no board, no correction); the reel is cut from the segments either way.
 - Vision's body pose request has **no compute device on the iOS simulator** (it throws, the detector keeps
   `.none`). Check detection on the Mac instead: `scripts/detect-orientation.sh <video>...` prints the scores
   of any recording, and `--selftest <photo of people> <dir>` turns the photo each way and checks the decision.
   Orientation test frames land in `.build/shots/reel/orientation/`.
-- The reel scoreboard is drawn per frame with Core Image (`ReelOverlayComposer`, iOS 26
-  `AVVideoComposition(applyingFiltersTo:applier:)`): each frame is a pure function of its composition
-  time, so it works for export and playback and is testable. Do not switch it to
+- **One compositor**: `FrameCompositor` (a custom `AVVideoCompositing`, Apple's AVCustomEdit pattern) draws every
+  frame of both exports with Core Image: black at the render size (the first piece's upright size), the piece's
+  stored frame through its layer transform (`uprightGeometry` + `fitting`, top-left pixels, flipped into Core
+  Image's bottom-left coordinates by `FrameInstruction.coreImageTransform`), then the board for that time. 30 fps,
+  Rec. 709, 4:2:0 in and out, no colour management in the CIContext (pixels pass through). Each frame is a pure
+  function of its composition time. Where a piece has no video frame (a segment's sound outlasts its picture by
+  tens of ms; pieces are inserted for the file's whole duration, the time base of the board and the reel plan) the
+  frame is black under the board, as the default compositor drew it; failing the request would fail the whole
+  export (`AudioTailExportTests`). A frame waiting for its board is parked (`PendingFrames`) so
+  `cancelAllPendingVideoCompositionRequests` finishes every waiting frame, once, before it returns. The Core Image applier (`AVVideoComposition(applyingFiltersTo:applier:)`,
+  async in the iOS 27 SDK) was not used: it has no per-piece geometry, render size or frame duration, which is why
+  the board used to be skipped over a source not stored upright. Do not switch to
   `AVVideoCompositionCoreAnimationTool` (export-only, begin-time quirks, custom layers never drawn).
-- The board is SwiftUI (`ReelScoreboardView`, previewable) rasterised once per state with
+- **Boards are rendered lazily** (`ScoreboardOverlaySource`): a full match has hundreds of board states and a 4K
+  board is 1.6 MB, so cues are looked up by time (binary search), at most 16 rendered boards are cached (LRU,
+  Mutex), a miss renders on the main actor (`ReelScoreboardRenderer`) while that frame's request waits in a task
+  (never a blocked thread), concurrent misses share one render, and serving a cached board prefetches the next
+  cue's (one at a time). The main actor must stay free during an export (it is: the export is awaited).
+- The board is SwiftUI (`ReelScoreboardView`, previewable) rasterised per state with
   `ImageRenderer` at the pixel size `ReelScoreboardLayout` derives from the video's short side, on the main
-  actor, before the export starts (`MediaExportService.scoreboardOverlays`; identical states share a bitmap).
+  actor, as the export reaches it (`ScoreboardOverlaySource`; identical states share a bitmap).
   Type is sized for the reel watched inline on a phone (about 340 pt wide in MatchDetailView): at 720p rows
   50 px, digits 29 px, names 25 px heavy condensed capitals, in a panel 440 px wide (capped at the short side
   less both 32 px margins). Both names share one size: `ReelScoreboardView.nameFontSize` measures them with the
@@ -304,19 +333,26 @@ scripts/screenshot.sh --no-build --wait 20 --args "-seedSampleMatches -seedReel 
   clip starts (points with `videoTimestamp <= clip start`), who serves, and for clips of 3 s or more whose game
   recorded the rally's point (the first point after the clip start, won by the attributed player) the winner's
   row lit with that point for the last 1.2 s; a highlight credited by a forced End Game has no such point and
-  gets no celebration. `WatchConnectivityManager.exportHighlightReel` passes the rendered
-  cues to `MediaExportService.exportHighlightReel(..., scoreboard:)`.
+  gets no celebration. `WatchConnectivityManager.exportHighlightReel` passes the cues to
+  `MediaExportService.exportHighlightReel(pieces:to:scoreboard:)`.
 - A source without sound (every mock video; a recording made without microphone access) leaves
   `makeComposition`'s audio track empty, and an empty track fails the export (AVError -11838) with or without
   the board, so `makeComposition` drops it: this covers the full video and the reel (`ReelManagerExportTests`
-  and `VideoOrientationIntegrationTests` check both). The board is only drawn over a
-  source stored upright (identity `preferredTransform`, as the exported full video is); otherwise the plain
-  reel is exported and a warning logged. Keep an `AVURLAsset` alive while using its tracks (a track does not
+  and `VideoOrientationIntegrationTests` check both). Keep an `AVURLAsset` alive while using its tracks (a track does not
   retain its asset; inserting a track of a released asset fails with -11800/-12780).
-- Proof, all on exported frames: `scoreTests/ReelOverlayTests` (the composer: a 4 s mock with two cues),
+- Proof, all on exported frames: `scoreTests/MatchOverlayExportTests` (three segments with corrections
+  [none, clockwise90, none] and scripted points: lit and settled points cells, the turned segment letterboxed
+  under the board; a reel cut from them with exactly one board, portrait from its first piece, a clip across the
+  boundary as two pieces; `match-full-*.png`, `match-reel-*.png`), `ScoreboardOverlaySourceTests` (cache bound over
+  400 states, misses, prefetch), `MatchScoreboardTimelineTests` (the rules), `ExportTimingTests` (opt-in,
+  `TEST_RUNNER_EXPORT_TIMING=1 make test T=scoreTests/ExportTimingTests`: default compositor vs FrameCompositor on a
+  60 s 720p mock, `export-timing.txt`), `AudioTailExportTests` (segments whose sound outlasts the picture: the
+  tail is black, the export succeeds; `tail-*.png`), `MatchScoreboardFlowTests` (no server after a decided match,
+  on the state the manager really builds), `scoreTests/ReelOverlayTests` (a 4 s
+  mock with two cues),
   `ReelExportTests` (the real reel: a fabricated two-game match, two clips, frames at 1.0/2.5/4.0/6.5 s;
-  plus sound, rotated and cue-less sources and the 1080p/4K/portrait layouts), `ReelManagerExportTests`
-  (through `exportMatchVideos()`) and `ReelScoreboardTimelineTests` (the rules). `make test` sets
+  plus sound, rotated, corrected and cue-less sources and the 1080p/4K/portrait layouts), `ReelManagerExportTests`
+  (the reel and the full video through `exportMatchVideos()`) and `ReelScoreboardTimelineTests` (the rules). `make test` sets
   `REEL_FRAMES_DIR` so frames land in `.build/shots/reel/` (`board.png`, `reel-*.png`, `scoreboard-reel-*.png`,
   `board-1080p.png`, `manager-reel-*.png`, ...); look at them with the Read tool whenever the board or the
   composer changes. When sampling pixels in tests, avoid glyphs (the digits are black on the gold box):

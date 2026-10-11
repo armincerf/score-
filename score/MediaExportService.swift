@@ -2,9 +2,10 @@
 //  MediaExportService.swift
 //  score
 //
-//  Video export: concatenates the recorded segments of a match into one upright full video
-//  (each segment rotated by its own preferredTransform) and cuts highlight clips out of it.
-//  Uses the iOS 26+ value-type AVVideoComposition configuration API and the iOS 18+ async
+//  Video export: concatenates the recorded segments of a match into one upright full video and joins ranges of
+//  them into the highlight reel, each piece turned upright (preferredTransform, then the detected correction) and
+//  letterboxed into the first piece's frame, with the scoreboard burned in, all drawn by one compositor
+//  (`FrameCompositor`). Uses the iOS 26+ value-type AVVideoComposition configuration API and the iOS 18+ async
 //  AVAssetExportSession API with live progress.
 //
 
@@ -80,14 +81,30 @@ enum MediaExportService {
     /// Progress callback in 0...1. Always invoked on the main actor.
     typealias ProgressHandler = @MainActor @Sendable (Double) -> Void
 
+    /// A stretch of a source file in an export: the whole file (nil range) or a range of it in the file's own time
+    /// base, and the extra turn the file needs on top of its preferredTransform (`VideoOrientationDetector`).
+    nonisolated struct SourcePiece: Sendable {
+        let url: URL
+        let timeRange: CMTimeRange?
+        let correction: VideoRotationCorrection
+
+        init(url: URL, timeRange: CMTimeRange? = nil, correction: VideoRotationCorrection = .none) {
+            self.url = url
+            self.timeRange = timeRange
+            self.correction = correction
+        }
+    }
+
     // MARK: - Full Video Export
 
     /// Concatenates `segments` (in order) into one upright movie. `corrections` is aligned with `segments` (a
     /// missing entry is `.none`): the extra turn each segment needs on top of its preferredTransform, as decided
-    /// from its pictures by `VideoOrientationDetector`.
+    /// from its pictures by `VideoOrientationDetector`. `scoreboard` cues (times in the full video, see
+    /// `MatchScoreboardTimeline`) are burned into the frames; empty = a plain video.
     static func exportFullVideo(
         segments: [URL],
         corrections: [VideoRotationCorrection] = [],
+        scoreboard: [ReelScoreboardCue] = [],
         to outputURL: URL,
         quality: ExportQuality = .hd720p,
         progressHandler: @escaping ProgressHandler = { _ in }
@@ -95,7 +112,10 @@ enum MediaExportService {
         guard !segments.isEmpty else { throw ExportError.noVideoTrackInSource }
         try? FileManager.default.removeItem(at: outputURL)
 
-        let built = try await makeComposition(clips: segments.map { ($0, nil) }, corrections: corrections)
+        let pieces = segments.enumerated().map { index, url in
+            SourcePiece(url: url, correction: corrections.indices.contains(index) ? corrections[index] : .none)
+        }
+        let built = try await makeComposition(pieces: pieces, scoreboard: scoreboard)
         try await exportComposition(built, to: outputURL, quality: quality, progressHandler: progressHandler)
 
         return ExportResult(
@@ -107,101 +127,82 @@ enum MediaExportService {
 
     // MARK: - Highlight Reel Export
 
-    /// Cuts `clips` (times in `source`'s time base) out of `source` into one reel, in order. `scoreboard` cues
-    /// (reel-time ranges and bitmaps, see `scoreboardOverlays`) are burned into the frames; empty = a plain reel.
-    /// `correction` is the extra turn `source` needs on top of its preferredTransform: `.none` for an exported full
-    /// video (already upright), the detected correction for a raw camera segment kept as the full video. A turned
-    /// reel is exported without the board (see `withScoreboard`).
+    /// Joins `pieces` (ranges of the raw camera segments, each with its own correction) into one reel, in order.
+    /// `scoreboard` cues (reel-time ranges, see `ReelScoreboardTimeline`) are burned into the frames; empty = a
+    /// plain reel.
+    static func exportHighlightReel(
+        pieces: [SourcePiece],
+        to outputURL: URL,
+        scoreboard: [ReelScoreboardCue] = [],
+        quality: ExportQuality = .hd720p,
+        progressHandler: @escaping ProgressHandler = { _ in }
+    ) async throws -> ExportResult {
+        let cut = pieces.filter { ($0.timeRange?.duration ?? .zero) > .zero }
+        guard !cut.isEmpty else { throw ExportError.noClips }
+        try? FileManager.default.removeItem(at: outputURL)
+
+        let built = try await makeComposition(pieces: cut, scoreboard: scoreboard)
+        try await exportComposition(built, to: outputURL, quality: quality, progressHandler: progressHandler)
+        return ExportResult(
+            outputURL: outputURL, duration: CMTimeGetSeconds(built.composition.duration),
+            fileSize: fileSize(at: outputURL))
+    }
+
+    /// Cuts `clips` (times in `source`'s time base) out of one `source` into a reel, in order; `correction` is the
+    /// extra turn `source` needs on top of its preferredTransform.
     static func exportHighlightReel(
         from source: URL,
         to outputURL: URL,
         clips: [HighlightClipInfo],
-        scoreboard: [OverlayCue] = [],
+        scoreboard: [ReelScoreboardCue] = [],
         correction: VideoRotationCorrection = .none,
         quality: ExportQuality = .hd720p,
         progressHandler: @escaping ProgressHandler = { _ in }
     ) async throws -> ExportResult {
         guard !clips.isEmpty else { throw ExportError.noClips }
-        try? FileManager.default.removeItem(at: outputURL)
-
         let asset = AVURLAsset(url: source, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
         let durationSeconds = CMTimeGetSeconds(try await asset.load(.duration))
         let timeRanges = clipTimeRanges(for: clips, assetDuration: durationSeconds)
         guard !timeRanges.isEmpty else { throw ExportError.noClips }
-
-        var built = try await makeComposition(
-            clips: timeRanges.map { (source, $0) }, corrections: Array(repeating: correction, count: timeRanges.count))
-        if !scoreboard.isEmpty {
-            built = try await withScoreboard(scoreboard, on: built, source: asset, correction: correction)
-        }
-        try await exportComposition(built, to: outputURL, quality: quality, progressHandler: progressHandler)
-
-        let totalDuration = timeRanges.reduce(0) { $0 + CMTimeGetSeconds($1.duration) }
-        return ExportResult(outputURL: outputURL, duration: totalDuration, fileSize: fileSize(at: outputURL))
+        return try await exportHighlightReel(
+            pieces: timeRanges.map { SourcePiece(url: source, timeRange: $0, correction: correction) },
+            to: outputURL, scoreboard: scoreboard, quality: quality, progressHandler: progressHandler)
     }
 
-    /// Renders each distinct board state once, sized for a `videoSize` frame (the reel's upright size), and pairs
-    /// the bitmaps with the cues' reel-time ranges. A state that fails to render is left out (and logged).
-    static func scoreboardOverlays(_ cues: [ReelScoreboardCue], videoSize: CGSize) -> [OverlayCue] {
-        let layout = ReelScoreboardLayout(videoSize: videoSize)
-        var rendered: [ReelScoreboardState: CGImage] = [:]
-        return cues.compactMap { cue in
-            if rendered[cue.state] == nil {
-                rendered[cue.state] = ReelScoreboardRenderer.render(cue.state, layout: layout)
+    /// The reel's pieces for `highlights` (wall-clock ranges, in reel order): each highlight's range of the
+    /// concatenated video mapped back onto the segment files it was recorded in (two pieces when it crosses a
+    /// segment boundary), with that segment's correction; `clips` pairs each highlight that has footage with how long
+    /// it runs in the reel (for `ReelScoreboardTimeline`). `segments` and `corrections` line up with
+    /// `timeline.segments`. Pure so it can be unit-tested.
+    nonisolated static func reelPlan(
+        for highlights: [HighlightClip], timeline: RecordingTimeline, segments: [URL],
+        corrections: [VideoRotationCorrection]
+    ) -> (pieces: [SourcePiece], clips: [ReelClip], withoutFootage: [HighlightClip]) {
+        var pieces: [SourcePiece] = []
+        var clips: [ReelClip] = []
+        var withoutFootage: [HighlightClip] = []
+        for highlight in highlights {
+            let stretches =
+                timeline.videoRange(wallStart: highlight.startTimestamp, wallEnd: highlight.endTimestamp)
+                .map { timeline.segmentRanges(videoStart: $0.lowerBound, videoEnd: $0.upperBound) }?
+                .filter { segments.indices.contains($0.segmentIndex) } ?? []
+            guard !stretches.isEmpty else {
+                withoutFootage.append(highlight)
+                continue
             }
-            guard let image = rendered[cue.state] else {
-                Log.video.error("Reel scoreboard: a board state failed to render")
-                return nil
+            for stretch in stretches {
+                let index = stretch.segmentIndex
+                let range = CMTimeRange(
+                    start: CMTime(seconds: stretch.start, preferredTimescale: 600),
+                    end: CMTime(seconds: stretch.end, preferredTimescale: 600))
+                pieces.append(
+                    SourcePiece(
+                        url: segments[index], timeRange: range,
+                        correction: corrections.indices.contains(index) ? corrections[index] : .none))
             }
-            return OverlayCue(timeRange: cue.timeRange, image: image, origin: layout.origin)
+            clips.append(ReelClip(highlight: highlight, reelDuration: stretches.map(\.duration).reduce(0, +)))
         }
-    }
-
-    /// `scoreboardOverlays` sized for a reel cut from `source` (its first video track's upright size).
-    static func scoreboardOverlays(_ cues: [ReelScoreboardCue], forReelFrom source: URL) async throws -> [OverlayCue] {
-        guard !cues.isEmpty else { return [] }
-        let asset = AVURLAsset(url: source)
-        guard let track = try await asset.loadTracks(withMediaType: .video).first else {
-            throw ExportError.noVideoTrackInSource
-        }
-        let (naturalSize, preferredTransform) = try await track.load(.naturalSize, .preferredTransform)
-        extendLifetime(asset)  // a track does not keep its asset alive
-        return scoreboardOverlays(
-            cues, videoSize: uprightGeometry(naturalSize: naturalSize, preferredTransform: preferredTransform).size)
-    }
-
-    /// Swaps the reel's video composition for one that draws the scoreboard over each frame.
-    ///
-    /// The Core Image composition shows the composition track's frames as stored (the track's preferredTransform
-    /// is identity) and ignores any correction, so the board is only drawn over a source that is stored upright
-    /// and needs no correction. The exported full video always is (it is rendered through a video composition); a
-    /// raw camera file kept as the full video after a failed export may not be, so such a source keeps the plain
-    /// reel, turned upright by makeComposition.
-    private static func withScoreboard(
-        _ scoreboard: [OverlayCue], on built: BuiltComposition, source: AVURLAsset,
-        correction: VideoRotationCorrection
-    ) async throws -> BuiltComposition {
-        guard correction == .none else {
-            Log.video.warning(
-                "Reel scoreboard skipped: the source needs a \(correction.rawValue, privacy: .public) correction")
-            return built
-        }
-        guard let sourceTrack = try await source.loadTracks(withMediaType: .video).first,
-            try await sourceTrack.load(.preferredTransform).isIdentity
-        else {
-            Log.video.warning("Reel scoreboard skipped: the source video is not stored upright")
-            return built
-        }
-        let reelDuration = built.composition.duration
-        let overrun = CMTimeSubtract(scoreboard.map(\.timeRange.end).max() ?? .zero, reelDuration).seconds
-        if overrun > 1.0 / 30 {
-            Log.video.warning("Reel scoreboard runs \(overrun)s past the reel's end: cues may be misaligned")
-        }
-        let videoComposition = try await ReelOverlayComposer.videoComposition(for: built.composition, cues: scoreboard)
-        Log.video.info(
-            "Reel scoreboard: \(scoreboard.count) cue(s) over \(reelDuration.seconds)s, frame \(Int(videoComposition.renderSize.width))x\(Int(videoComposition.renderSize.height)), \(videoComposition.frameDuration.seconds)s per frame"
-        )
-        return BuiltComposition(composition: built.composition, videoComposition: videoComposition)
+        return (pieces, clips, withoutFootage)
     }
 
     /// Converts clips to time ranges inside the asset, dropping empty or out-of-range clips.
@@ -256,12 +257,12 @@ enum MediaExportService {
         (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int64
     }
 
-    /// Inserts each (file, range) in order; nil range = the whole file. Every piece is rotated
-    /// upright with its own preferredTransform, then by its entry in `corrections` (aligned with `clips`;
-    /// missing entries are `.none`); the render size follows the first piece, and a piece of another size is
-    /// scaled to fit and centred in it (`fitting`), never cropped.
+    /// Inserts each piece in order (nil range = the whole file) and draws it with `FrameCompositor`: every piece is
+    /// rotated upright with its own preferredTransform, then by its correction; the render size follows the first
+    /// piece, and a piece of another size is scaled to fit and centred in it (`fitting`), never cropped. Non-empty
+    /// `scoreboard` cues are drawn over the frames, rendered as the export reaches them (`ScoreboardOverlaySource`).
     private static func makeComposition(
-        clips: [(url: URL, range: CMTimeRange?)], corrections: [VideoRotationCorrection] = []
+        pieces: [SourcePiece], scoreboard: [ReelScoreboardCue] = []
     ) async throws -> BuiltComposition {
         let composition = AVMutableComposition()
         guard
@@ -274,16 +275,16 @@ enum MediaExportService {
             withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
 
         var cursor = CMTime.zero
-        var instructions: [AVVideoCompositionInstruction] = []
+        var placed: [(range: CMTimeRange, transform: CGAffineTransform)] = []
         var renderSize: CGSize?
 
-        for (index, clip) in clips.enumerated() {
-            let asset = AVURLAsset(url: clip.url, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
+        for (index, piece) in pieces.enumerated() {
+            let asset = AVURLAsset(url: piece.url, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
             guard let sourceVideo = try await asset.loadTracks(withMediaType: .video).first else {
                 continue  // unreadable segment: skip rather than fail the whole export
             }
             let range: CMTimeRange
-            if let explicit = clip.range {
+            if let explicit = piece.timeRange {
                 range = explicit
             } else {
                 range = CMTimeRange(start: .zero, duration: try await asset.load(.duration))
@@ -294,9 +295,8 @@ enum MediaExportService {
             }
 
             let (naturalSize, preferredTransform) = try await sourceVideo.load(.naturalSize, .preferredTransform)
-            let correction = corrections.indices.contains(index) ? corrections[index] : .none
             let geometry = uprightGeometry(
-                naturalSize: naturalSize, preferredTransform: preferredTransform, correction: correction)
+                naturalSize: naturalSize, preferredTransform: preferredTransform, correction: piece.correction)
             let frame = renderSize ?? geometry.size
             renderSize = frame
             if geometry.size != frame {
@@ -304,14 +304,11 @@ enum MediaExportService {
                     "Export piece \(index) is \(Int(geometry.size.width))x\(Int(geometry.size.height)) in a \(Int(frame.width))x\(Int(frame.height)) frame: letterboxed"
                 )
             }
-
-            var layer = AVVideoCompositionLayerInstruction.Configuration(assetTrack: videoTrack)
-            layer.setTransform(geometry.transform.concatenating(fitting(geometry.size, into: frame)), at: cursor)
-            let instruction = AVVideoCompositionInstruction.Configuration(
-                layerInstructions: [AVVideoCompositionLayerInstruction(configuration: layer)],
-                timeRange: CMTimeRange(start: cursor, duration: range.duration)
-            )
-            instructions.append(AVVideoCompositionInstruction(configuration: instruction))
+            placed.append(
+                (
+                    CMTimeRange(start: cursor, duration: range.duration),
+                    geometry.transform.concatenating(fitting(geometry.size, into: frame))
+                ))
             cursor = CMTimeAdd(cursor, range.duration)
         }
 
@@ -319,13 +316,50 @@ enum MediaExportService {
         // An audio track nothing was inserted into (silent sources, e.g. the simulator's mock footage) makes the
         // export fail with AVFoundationErrorDomain -11838 "operation not supported for this media"
         if let audioTrack, audioTrack.segments.isEmpty { composition.removeTrack(audioTrack) }
+        let overlay = scoreboardSource(scoreboard, renderSize: renderSize, duration: cursor)
+        return BuiltComposition(
+            composition: composition,
+            videoComposition: frameComposition(
+                placed, trackID: videoTrack.trackID, renderSize: renderSize, overlay: overlay))
+    }
+
+    /// `FrameCompositor` drawing each placed piece (its composition range and stored-to-frame transform) at
+    /// `renderSize`, 30 frames a second, tagged Rec. 709 like the camera's SDR footage.
+    private static func frameComposition(
+        _ placed: [(range: CMTimeRange, transform: CGAffineTransform)], trackID: CMPersistentTrackID,
+        renderSize: CGSize, overlay: ScoreboardOverlaySource?
+    ) -> AVVideoComposition {
+        let instructions = placed.map { piece in
+            FrameInstruction(
+                timeRange: piece.range, trackID: trackID, transform: piece.transform, renderSize: renderSize,
+                overlay: overlay)
+        }
         let configuration = AVVideoComposition.Configuration(
+            colorPrimaries: AVVideoColorPrimaries_ITU_R_709_2,
+            colorTransferFunction: AVVideoTransferFunction_ITU_R_709_2,
+            colorYCbCrMatrix: AVVideoYCbCrMatrix_ITU_R_709_2,
+            customVideoCompositorClass: FrameCompositor.self,
             frameDuration: CMTime(value: 1, timescale: 30),
             instructions: instructions,
             renderSize: renderSize
         )
-        return BuiltComposition(
-            composition: composition, videoComposition: AVVideoComposition(configuration: configuration))
+        return AVVideoComposition(configuration: configuration)
+    }
+
+    /// The lazy board source for a `renderSize` frame, or nil without cues. Logs the cues and warns when they run
+    /// past the composition's end (misaligned times).
+    private static func scoreboardSource(
+        _ cues: [ReelScoreboardCue], renderSize: CGSize, duration: CMTime
+    ) -> ScoreboardOverlaySource? {
+        guard !cues.isEmpty else { return nil }
+        let overrun = CMTimeSubtract(cues.map(\.timeRange.end).max() ?? .zero, duration).seconds
+        if overrun > 1.0 / 30 {
+            Log.video.warning("Scoreboard runs \(overrun)s past the video's end: cues may be misaligned")
+        }
+        Log.video.info(
+            "Scoreboard: \(cues.count) cue(s), \(Set(cues.map(\.state)).count) board(s) over \(duration.seconds)s, frame \(Int(renderSize.width))x\(Int(renderSize.height))"
+        )
+        return ScoreboardOverlaySource(cues: cues, videoSize: renderSize)
     }
 
     private static func exportComposition(
@@ -352,6 +386,34 @@ enum MediaExportService {
 
         try await exportSession.export(to: outputURL, as: quality.fileType)
         progressHandler(1.0)
+    }
+
+    // MARK: - Retry without the board
+
+    /// Whether drawing the scoreboard may be why an export failed, so that the export without it could succeed. A
+    /// full disk, an interrupted session (the app went to the background) or a cancelled task fails the plain export
+    /// just the same. Pure so it can be unit-tested.
+    nonisolated static func boardMayHaveCaused(_ error: any Error) -> Bool {
+        if error is CancellationError { return false }
+        let nsError = error as NSError
+        let lasting: [(domain: String, codes: Set<Int>)] = [
+            (AVFoundationErrorDomain, [AVError.Code.diskFull.rawValue, AVError.Code.operationInterrupted.rawValue]),
+            (NSCocoaErrorDomain, [NSFileWriteOutOfSpaceError, NSUserCancelledError]),
+            (NSPOSIXErrorDomain, [Int(ENOSPC)]),
+        ]
+        if lasting.contains(where: { $0.domain == nsError.domain && $0.codes.contains(nsError.code) }) {
+            return false
+        }
+        if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError {
+            return boardMayHaveCaused(underlying)
+        }
+        return true
+    }
+
+    /// A retry's `progress` (0...1) placed in what is left of the bar after `floor`, so the bar never moves back.
+    nonisolated static func retryProgress(_ progress: Double, after floor: Double) -> Double {
+        let start = min(max(floor, 0), 1)
+        return start + (1 - start) * min(max(progress, 0), 1)
     }
 
     // MARK: - Errors
