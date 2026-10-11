@@ -61,6 +61,8 @@ score/                      iOS app target
   RecordingTimeline.swift     RecordingSegment + wall-clock offset -> concatenated-video time mapping (gaps clamp)
   AudioSessionCoordinator.swift Owns AVAudioSession for a match (play-and-record to speaker; released at match end)
   MediaExportService.swift    Concatenates segments upright (per-track preferredTransform) + cuts the reel; export(to:as:) with progress
+  ReelScoreboard.swift        Broadcast-style scoreboard for the reel: state, pixel layout per video size, SwiftUI view, ImageRenderer
+  ReelOverlayComposer.swift   Burns time-ranged bitmaps (the scoreboard) into a video composition per frame with Core Image
   MockVideoGenerator.swift    Synthetic video for the simulator (no camera)
   VideoTransferable.swift     ShareLink/Transferable wrapper for exported videos
   VideoStore.swift            Application Support/Videos: per-match file names, stored references, legacy URL resolve
@@ -89,6 +91,7 @@ scoreTests/                 Swift Testing suites (@testable import score)
 scripts/                    xcb.sh (xcodebuild filter), deploy-device.sh (devicectl install), screenshot.sh, sync-xcode-skills.sh, hooks/,
                             testflight.sh (archive + upload), asc.py (App Store Connect API: testers, distribution)
 docs/icons/                 Rendered icon previews (ictool exports)
+docs/plans/                 Design notes for larger pieces of work (highlight-reel.md: orientation fix + scoreboard overlay)
 docs/screenshots/           Home screen renders (make screenshot output, refresh when the home screen changes)
 .github/workflows/ci.yml    lint (macos-26) + build/test (xcode-27 image)
 ```
@@ -208,6 +211,22 @@ make screenshot OUT=.build/shots/home-ax.png NO_BUILD=1 \
   reuses the last build; `--wait` lengthens the launch-to-capture delay for slow screens.
 - `.build/shots/` is gitignored; the home screen's renders live in `docs/screenshots/` (`sips -Z 1000` copies):
   refresh them when the home screen changes.
+
+## Highlight reel overlay
+
+- The reel scoreboard is drawn per frame with Core Image (`ReelOverlayComposer`, iOS 26
+  `AVVideoComposition(applyingFiltersTo:applier:)`): each frame is a pure function of its composition
+  time, so it works for export and playback and is testable. Do not switch it to
+  `AVVideoCompositionCoreAnimationTool` (export-only, begin-time quirks, custom layers never drawn).
+- The board is SwiftUI (`ReelScoreboardView`, previewable) rasterised once per state with
+  `ImageRenderer` at the pixel size `ReelScoreboardLayout` derives from the video height, on the main
+  actor, before the export starts.
+- `scoreTests/ReelOverlayTests` is the proof: it exports a 4 s mock video with two cues and checks
+  pixels of frames read back from the file. `make test` sets `REEL_FRAMES_DIR` so the frames and the
+  board land in `.build/shots/reel/` (`board.png`, `reel-1s.png`, `reel-3s.png`, `reel-3.9s.png`); look at
+  them with the Read tool whenever the board or the composer changes. When sampling pixels in tests,
+  avoid glyphs (the digits are black on the gold box): sample corners or compare regions.
+- Design and remaining work: `docs/plans/highlight-reel.md`.
 
 ## Icon
 
