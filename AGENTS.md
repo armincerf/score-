@@ -52,7 +52,7 @@ score/                      iOS app target
   PlayerRecords.swift         Pure records for the Stats pages: PlayedMatch (resolved players), leaderboard, PlayerRecord (streak, form), per-opponent records, a player's matches
   StatsView.swift             Stats page (leaderboard + head-to-head with player choice), StatsModel, StatsRoute + StatsRouteView (the pages behind its rows)
   PlayerStatsView.swift       A player's page (record, opponents, matches) + LeaderboardRow, RecordText, FormMarks, OutcomeBadge
-  HeadToHeadStatsView.swift   A pair's comparison and matches (All / A won / B won) as list sections, and as a page of its own
+  HeadToHeadStatsView.swift   A pair's comparison and matches (All / A won / B won: segmented, a menu when a label would clip) as list sections, and as a page of its own
   GameView.swift              Live match: camera preview, RecordingStatusBar (capture state), ScoringPanel, alerts
   ExportProgressView.swift    Modal shown while finishActiveMatch() stops, exports and saves (Game + Home)
   MatchHistoryView.swift      List of finished matches (scoreState.matchHistory, reloaded from the store at launch)
@@ -133,7 +133,8 @@ docs/screenshots/           Home screen, Stats page and reel-player renders (mak
   `scoreState.matchHistory` (`StatsModel` caches it per history change). Players are recognised as in
   the head-to-head and the AI summary (`MatchPlayers.names(of:)`/`key`: trimmed, case-insensitive,
   either order, names recovered from the "A vs B - date" match name); a match without two different
-  players counts for nobody, and a player shows as most recently spelled. Leaderboard order: win rate
+  players, or ended before any game finished (saved 0-0, `PlayedMatch.isPlayed`; the home card skips
+  it too), counts for nobody, and a player shows as most recently spelled. Leaderboard order: win rate
   (a match without a winner is played, not won), wins, fewer losses, name. The Stats pages are
   `StatsRoute` values on HomeView's `NavigationPath`, resolved at the stack's root: a value link on a
   page pushed with `navigationDestination(isPresented:)` does not push.
