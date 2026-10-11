@@ -41,7 +41,7 @@ jobs:
       - name: Build watch app
         run: make build-watch
       - name: Unit tests
-        run: make test
+        run: make test PARALLEL=NO
       - name: Upload test results
         if: failure()
         uses: actions/upload-artifact@v4

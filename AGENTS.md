@@ -23,7 +23,7 @@ FoundationModels summary is generated after each match.
 ```
 make build        # iOS app + embedded watch app, generic simulator, warnings are errors
 make build-watch  # watch app alone
-make test         # unit tests on the simulator;  make test T=scoreTests/ServingLogicTests
+make test         # unit tests on the simulator;  make test T=scoreTests/ServingLogicTests;  PARALLEL=NO = one at a time (CI)
 make lint         # swiftlint --strict + swift-format lint (what CI runs)
 make format       # swift-format + swiftlint --fix
 make check        # lint + build + build-watch + test  (the gate before pushing)

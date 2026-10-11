@@ -10,6 +10,9 @@ PROJECT      := score.xcodeproj
 SCHEME       := score
 WATCH_SCHEME := scorewatch Watch App
 SIM_NAME     ?= iPhone 17 Pro
+# PARALLEL=NO runs the tests one at a time (CI: a dozen video exports at once thrashed the 3-core runner and
+# tripped time limits; serial timings are each test's own work)
+PARALLEL     ?= YES
 # scripts/simulator-udid.sh picks (or creates) $(SIM_NAME) on the newest installed iOS runtime.
 DEST_GENERIC := generic/platform=iOS Simulator
 DEST_WATCH   := generic/platform=watchOS Simulator
@@ -50,7 +53,7 @@ test: ## Run unit tests on the simulator (T=scoreTests/Suite or T=scoreTests/Sui
 	@mkdir -p $(LOG_DIR) $(dir $(RESULT)); rm -rf $(RESULT)
 	set -o pipefail; udid=$$(scripts/simulator-udid.sh "$(SIM_NAME)"); mkdir -p $(BUILD_DIR)/shots/reel; \
 	xcodebuild test -project $(PROJECT) -scheme "$(SCHEME)" -destination "platform=iOS Simulator,id=$$udid" \
-	  -resultBundlePath $(RESULT) -collect-test-diagnostics never \
+	  -resultBundlePath $(RESULT) -collect-test-diagnostics never -parallel-testing-enabled $(PARALLEL) \
 	  CODE_SIGNING_ALLOWED=NO SWIFT_TREAT_WARNINGS_AS_ERRORS=YES $(ONLY) \
 	  TEST_RUNNER_REEL_FRAMES_DIR="$(abspath $(BUILD_DIR))/shots/reel" 2>&1 | tee $(LOG_DIR)/test.log | $(XCB)
 	@scripts/test-summary.sh $(RESULT)
