@@ -96,7 +96,7 @@ scripts/                    xcb.sh (xcodebuild filter), deploy-device.sh (device
                             detect-orientation.sh + orientation/ (the app's orientation detector as a Mac CLI)
 docs/icons/                 Rendered icon previews (ictool exports)
 docs/plans/                 Design notes for larger pieces of work (highlight-reel.md: orientation fix + scoreboard overlay)
-docs/screenshots/           Home screen renders (make screenshot output, refresh when the home screen changes)
+docs/screenshots/           Home screen and reel-player renders (make screenshot output, refresh when those screens change)
 .github/workflows/ci.yml    lint (macos-26) + build/test (xcode-27 image)
 ```
 
@@ -176,7 +176,8 @@ docs/screenshots/           Home screen renders (make screenshot output, refresh
 - A known-bug test is written for the correct behaviour and marked
   `.disabled("BUG: ...")` so it documents the defect without failing CI.
 - Run one suite/test: `make test T=scoreTests/EventSourcingTests` or
-  `T=scoreTests/EventSourcingTests/undoDropsLastPoint` (no parentheses).
+  `T=scoreTests/EventSourcingTests/undoDropsLastPoint()` (a Swift Testing function needs its `()`: without
+  them xcodebuild runs 0 tests; a parameterized test can only be run through its suite).
 
 ## Project file changes
 
@@ -262,8 +263,10 @@ scripts/screenshot.sh --wait 15 --args "-seedSampleMatches -seedReel -openLatest
   only its own row. `ReelScoreboardLayoutTests` checks it on `board-long-name.png` / `board-full-names.png`.
 - What the board shows is pure: `ReelScoreboardTimeline` turns the match (`scoreState`) and the reel's clips
   (each `HighlightClip` with its reel duration, in reel order) into `ReelScoreboardCue`s: the score as the
-  clip starts (points with `videoTimestamp <= clip start`), who serves, and for attributed clips of 3 s or more
-  the winner's row lit for the last 1.2 s. `WatchConnectivityManager.exportHighlightReel` passes the rendered
+  clip starts (points with `videoTimestamp <= clip start`), who serves, and for clips of 3 s or more whose game
+  recorded the rally's point (the first point after the clip start, won by the attributed player) the winner's
+  row lit with that point for the last 1.2 s; a highlight credited by a forced End Game has no such point and
+  gets no celebration. `WatchConnectivityManager.exportHighlightReel` passes the rendered
   cues to `MediaExportService.exportHighlightReel(..., scoreboard:)`.
 - A source without sound (every mock video; a recording made without microphone access) leaves
   `makeComposition`'s audio track empty, and an empty track fails the export (AVError -11838) with or without
