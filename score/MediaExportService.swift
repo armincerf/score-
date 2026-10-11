@@ -109,11 +109,15 @@ enum MediaExportService {
 
     /// Cuts `clips` (times in `source`'s time base) out of `source` into one reel, in order. `scoreboard` cues
     /// (reel-time ranges and bitmaps, see `scoreboardOverlays`) are burned into the frames; empty = a plain reel.
+    /// `correction` is the extra turn `source` needs on top of its preferredTransform: `.none` for an exported full
+    /// video (already upright), the detected correction for a raw camera segment kept as the full video. A turned
+    /// reel is exported without the board (see `withScoreboard`).
     static func exportHighlightReel(
         from source: URL,
         to outputURL: URL,
         clips: [HighlightClipInfo],
         scoreboard: [OverlayCue] = [],
+        correction: VideoRotationCorrection = .none,
         quality: ExportQuality = .hd720p,
         progressHandler: @escaping ProgressHandler = { _ in }
     ) async throws -> ExportResult {
@@ -125,9 +129,10 @@ enum MediaExportService {
         let timeRanges = clipTimeRanges(for: clips, assetDuration: durationSeconds)
         guard !timeRanges.isEmpty else { throw ExportError.noClips }
 
-        var built = try await makeComposition(clips: timeRanges.map { (source, $0) })
+        var built = try await makeComposition(
+            clips: timeRanges.map { (source, $0) }, corrections: Array(repeating: correction, count: timeRanges.count))
         if !scoreboard.isEmpty {
-            built = try await withScoreboard(scoreboard, on: built, source: asset)
+            built = try await withScoreboard(scoreboard, on: built, source: asset, correction: correction)
         }
         try await exportComposition(built, to: outputURL, quality: quality, progressHandler: progressHandler)
 
@@ -168,12 +173,19 @@ enum MediaExportService {
     /// Swaps the reel's video composition for one that draws the scoreboard over each frame.
     ///
     /// The Core Image composition shows the composition track's frames as stored (the track's preferredTransform
-    /// is identity), so the board is only drawn over a source stored upright. The exported full video always is
-    /// (it is rendered through a video composition); a raw camera file kept as the full video after a failed
-    /// export may not be, so such a source keeps the plain reel, rotated upright by makeComposition.
+    /// is identity) and ignores any correction, so the board is only drawn over a source that is stored upright
+    /// and needs no correction. The exported full video always is (it is rendered through a video composition); a
+    /// raw camera file kept as the full video after a failed export may not be, so such a source keeps the plain
+    /// reel, turned upright by makeComposition.
     private static func withScoreboard(
-        _ scoreboard: [OverlayCue], on built: BuiltComposition, source: AVURLAsset
+        _ scoreboard: [OverlayCue], on built: BuiltComposition, source: AVURLAsset,
+        correction: VideoRotationCorrection
     ) async throws -> BuiltComposition {
+        guard correction == .none else {
+            Log.video.warning(
+                "Reel scoreboard skipped: the source needs a \(correction.rawValue, privacy: .public) correction")
+            return built
+        }
         guard let sourceTrack = try await source.loadTracks(withMediaType: .video).first,
             try await sourceTrack.load(.preferredTransform).isIdentity
         else {
@@ -220,6 +232,19 @@ enum MediaExportService {
         return (correction.rotatedSize(metadataSize), transform)
     }
 
+    /// Places a `pieceSize` frame (upright, at the origin) in a `renderSize` frame: unchanged when the sizes match,
+    /// otherwise scaled to fit (the smaller of the two ratios) and centred on whole pixels, so a piece shaped unlike
+    /// the first one (a mid-match orientation change, a different correction) letterboxes instead of being cropped.
+    /// The bands show the composition's black background. Pure so it can be unit-tested.
+    nonisolated static func fitting(_ pieceSize: CGSize, into renderSize: CGSize) -> CGAffineTransform {
+        guard pieceSize != renderSize, pieceSize.width > 0, pieceSize.height > 0 else { return .identity }
+        let scale = min(renderSize.width / pieceSize.width, renderSize.height / pieceSize.height)
+        // max(0, ...): rounding error must not floor a zero margin to -1
+        let offsetX = max(0, ((renderSize.width - pieceSize.width * scale) / 2).rounded(.down))
+        let offsetY = max(0, ((renderSize.height - pieceSize.height * scale) / 2).rounded(.down))
+        return CGAffineTransform(a: scale, b: 0, c: 0, d: scale, tx: offsetX, ty: offsetY)
+    }
+
     // MARK: - Private Implementation
 
     private struct BuiltComposition {
@@ -233,7 +258,8 @@ enum MediaExportService {
 
     /// Inserts each (file, range) in order; nil range = the whole file. Every piece is rotated
     /// upright with its own preferredTransform, then by its entry in `corrections` (aligned with `clips`;
-    /// missing entries are `.none`); the render size follows the first piece.
+    /// missing entries are `.none`); the render size follows the first piece, and a piece of another size is
+    /// scaled to fit and centred in it (`fitting`), never cropped.
     private static func makeComposition(
         clips: [(url: URL, range: CMTimeRange?)], corrections: [VideoRotationCorrection] = []
     ) async throws -> BuiltComposition {
@@ -271,10 +297,16 @@ enum MediaExportService {
             let correction = corrections.indices.contains(index) ? corrections[index] : .none
             let geometry = uprightGeometry(
                 naturalSize: naturalSize, preferredTransform: preferredTransform, correction: correction)
-            if renderSize == nil { renderSize = geometry.size }
+            let frame = renderSize ?? geometry.size
+            renderSize = frame
+            if geometry.size != frame {
+                Log.video.warning(
+                    "Export piece \(index) is \(Int(geometry.size.width))x\(Int(geometry.size.height)) in a \(Int(frame.width))x\(Int(frame.height)) frame: letterboxed"
+                )
+            }
 
             var layer = AVVideoCompositionLayerInstruction.Configuration(assetTrack: videoTrack)
-            layer.setTransform(geometry.transform, at: cursor)
+            layer.setTransform(geometry.transform.concatenating(fitting(geometry.size, into: frame)), at: cursor)
             let instruction = AVVideoCompositionInstruction.Configuration(
                 layerInstructions: [AVVideoCompositionLayerInstruction(configuration: layer)],
                 timeRange: CMTimeRange(start: cursor, duration: range.duration)

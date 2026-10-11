@@ -5,8 +5,8 @@
 //  Decides from the pictures whether a recorded segment needs rotating: samples a few frames around the middle,
 //  runs Vision's human body pose model with each candidate orientation and scores how many people stand upright
 //  (neck above hips) in each. `OrientationDecision` turns the scores into a correction, keeping the metadata
-//  orientation unless the evidence is clear. The scores are logged so problems with real footage can be read
-//  from the device logs.
+//  orientation unless the evidence is clear; for a match, segments stored alike are decided together from their
+//  summed scores. The scores are logged so problems with real footage can be read from the device logs.
 //
 
 import AVFoundation
@@ -22,14 +22,50 @@ nonisolated enum VideoOrientationDetector {
     /// Frames are scaled to fit this box before detection (about 640 px on the long side).
     static let maximumFrameSize = CGSize(width: 640, height: 640)
 
-    /// The correction each URL needs, in order, detected one after another (each runs several Vision requests).
+    /// The correction each URL needs, in order. Each is detected on its own (one after another: each runs several
+    /// Vision requests), then segments stored alike (same video track `naturalSize` and `preferredTransform`, so
+    /// the same camera setup) are decided together from their summed scores (`OrientationDecision.groups`): a
+    /// short segment, one with nobody in shot or one whose detection failed follows its confident neighbours, so
+    /// they cannot disagree by a quarter turn.
     @concurrent
     static func corrections(for urls: [URL]) async -> [VideoRotationCorrection] {
-        var corrections: [VideoRotationCorrection] = []
+        var segments: [(key: StoredGeometry?, scores: [VideoRotationCorrection: Double])] = []
         for url in urls {
-            corrections.append(await correction(for: url).correction)
+            let scores = await correction(for: url).scores
+            segments.append((await storedGeometry(of: url), scores))
         }
-        return corrections
+        let groups = OrientationDecision.groups(pooling: segments)
+        for group in groups {
+            let names = group.members.map { urls[$0].lastPathComponent }.joined(separator: ", ")
+            let stored = segments[group.members[0]].key?.description ?? "unreadable"
+            Log.video.info(
+                "Orientation group [\(names, privacy: .public)] stored \(stored, privacy: .public): \(describe(group.scores), privacy: .public) -> \(group.correction.rawValue, privacy: .public)"
+            )
+        }
+        return OrientationDecision.corrections(for: groups, count: urls.count)
+    }
+
+    /// How a segment's video track is stored: segments stored alike were recorded with the same camera setup.
+    nonisolated struct StoredGeometry: Equatable, Sendable, CustomStringConvertible {
+        let naturalSize: CGSize
+        let preferredTransform: CGAffineTransform
+
+        var description: String {
+            let transform = preferredTransform
+            let matrix = [transform.a, transform.b, transform.c, transform.d, transform.tx, transform.ty]
+                .map { String(format: "%g", Double($0)) }.joined(separator: " ")
+            return "\(Int(naturalSize.width))x\(Int(naturalSize.height)) [\(matrix)]"
+        }
+    }
+
+    /// The first video track's stored size and transform, or nil when the file has none or cannot be read.
+    private static func storedGeometry(of url: URL) async -> StoredGeometry? {
+        let asset = AVURLAsset(url: url)
+        guard let track = try? await asset.loadTracks(withMediaType: .video).first,
+            let stored = try? await track.load(.naturalSize, .preferredTransform)
+        else { return nil }
+        extendLifetime(asset)  // a track does not keep its asset alive
+        return StoredGeometry(naturalSize: stored.0, preferredTransform: stored.1)
     }
 
     /// The correction `url`'s frames need to show people upright, with the per-orientation evidence. Any error

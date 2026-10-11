@@ -367,3 +367,43 @@ extension CGRect {
         CGPoint(x: minX + inset, y: minY + inset)
     }
 }
+
+// MARK: - A source that still needs a correction
+
+extension ReelExportSourceTests {
+    /// The raw camera segment kept as the full video when the full export fails carries the detector's correction:
+    /// the reel must turn it (and leave the board out, which the Core Image composition cannot turn).
+    @Test(
+        "A reel cut with a correction comes out turned, without the board", .timeLimit(.minutes(3)),
+        arguments: [false, true])
+    func correctedSourceIsTurned(withCues: Bool) async throws {
+        let source = try #require(
+            await MockVideoGenerator.generateMockVideo(
+                duration: 6, to: Self.directory.appendingPathComponent("scoreboard-corrected-source.mov")))
+        let plan = try await Self.cues(for: source)
+        let name = withCues ? "scoreboard-corrected-cues-reel" : "scoreboard-corrected-reel"
+        let reel = try await MediaExportService.exportHighlightReel(
+            from: source, to: Self.directory.appendingPathComponent("\(name).mov"), clips: [plan.clip],
+            scoreboard: withCues ? plan.overlays : [], correction: .upsideDown180, quality: .hd720p)
+        #expect(abs(reel.duration - 4) < 0.05)
+
+        // Reel 1 s is 1 s into the clip, which starts at 1 s of the source
+        let image = try await ReelFrames.frame(of: reel.outputURL, at: 1)
+        try ReelFrames.savePNG(image, name: "\(name)-1.0s")
+        #expect(image.width == 1280 && image.height == 720)
+        let original = OrientationPixels(try await ReelFrames.frame(of: source, at: 2))
+        let exported = OrientationPixels(image)
+        let turned = original.brightRecall(in: exported) { x, y in (1279 - x, 719 - y) }
+        let unturned = original.brightRecall(in: exported) { x, y in (x, y) }
+        #expect(turned > 0.85, "half-turn recall \(turned)")
+        #expect(unturned < 0.5, "unturned recall \(unturned)")
+
+        let size = CGSize(width: image.width, height: image.height)
+        let box = ReelScoreboardLayout(videoSize: size).gamesBox(row: 0, in: size)
+        let gold = ReelPixels(image).count(in: box, where: ReelPixels.isGold)
+        #expect(gold == 0, "no board over a turned reel")
+        try OrientationFrames.note(
+            "\(name): \(image.width)x\(image.height), half-turn recall \(turned), unturned \(unturned), gold \(gold)",
+            file: "\(name).txt")
+    }
+}

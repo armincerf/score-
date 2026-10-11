@@ -90,7 +90,8 @@ nonisolated enum VideoRotationCorrection: String, Sendable, CaseIterable, Hashab
 }
 
 /// Picks a correction from per-orientation evidence, conservatively: weak or ambiguous evidence keeps the metadata
-/// orientation (`.none`), because a wrong rotation is far worse than none.
+/// orientation (`.none`), because a wrong rotation is far worse than none. Segments recorded with the same camera
+/// setup are decided together (`groups(pooling:)`), so they cannot disagree by a quarter turn.
 nonisolated enum OrientationDecision {
     /// The best-scoring correction when its score is at least `minimumScore` and at least `margin` times the
     /// runner-up's; otherwise `.none`. Ties, empty input and non-finite scores give `.none`.
@@ -102,5 +103,64 @@ nonisolated enum OrientationDecision {
         let runnerUp = ranked.dropFirst().first?.value ?? 0
         guard best.value > runnerUp, best.value >= margin * runnerUp else { return .none }
         return best.key
+    }
+
+    /// Segments that share a key (in the app: the same stored size and preferredTransform, i.e. the same camera
+    /// setup) decided together: their scores are summed per orientation and `decide(scores:)` runs once on the
+    /// sum, so a short segment, one with nobody in shot or one whose detection failed (empty scores) follows its
+    /// confident neighbours instead of keeping `.none` while they turn a quarter. A segment without a key decides
+    /// alone. Groups are in order of their first member.
+    nonisolated struct Group: Equatable, Sendable {
+        /// Indices of the member segments, in order.
+        let members: [Int]
+        /// The members' scores summed per orientation.
+        let scores: [VideoRotationCorrection: Double]
+        /// `decide(scores:)` of the summed scores, for every member.
+        let correction: VideoRotationCorrection
+    }
+
+    /// The groups of `segments` (one `(key, scores)` per segment) and each group's decision; see `Group`.
+    static func groups<Key: Equatable>(
+        pooling segments: [(key: Key?, scores: [VideoRotationCorrection: Double])],
+        minimumScore: Double = 1.0, margin: Double = 1.5
+    ) -> [Group] {
+        var memberLists: [[Int]] = []
+        var keys: [Key?] = []
+        for (index, segment) in segments.enumerated() {
+            if let key = segment.key, let group = keys.firstIndex(where: { $0 == key }) {
+                memberLists[group].append(index)
+            } else {
+                memberLists.append([index])
+                keys.append(segment.key)
+            }
+        }
+        return memberLists.map { members in
+            let scores = members.reduce(into: [VideoRotationCorrection: Double]()) { sum, index in
+                sum.merge(segments[index].scores, uniquingKeysWith: +)
+            }
+            return Group(
+                members: members, scores: scores,
+                correction: decide(scores: scores, minimumScore: minimumScore, margin: margin))
+        }
+    }
+
+    /// The correction for each of `segments`, in order: its group's decision (see `Group`).
+    static func decide<Key: Equatable>(
+        pooling segments: [(key: Key?, scores: [VideoRotationCorrection: Double])],
+        minimumScore: Double = 1.0, margin: Double = 1.5
+    ) -> [VideoRotationCorrection] {
+        corrections(
+            for: groups(pooling: segments, minimumScore: minimumScore, margin: margin), count: segments.count)
+    }
+
+    /// Each of `count` segments' correction: its group's (`.none` for an index no group lists).
+    static func corrections(for groups: [Group], count: Int) -> [VideoRotationCorrection] {
+        var corrections = Array(repeating: VideoRotationCorrection.none, count: count)
+        for group in groups {
+            for index in group.members where corrections.indices.contains(index) {
+                corrections[index] = group.correction
+            }
+        }
+        return corrections
     }
 }

@@ -50,8 +50,8 @@ export starts (a few images per reel).
 | `score/ReelScoreboardTimeline.swift` | Pure: clips + match data -> the board state(s) for each clip, with reel-time ranges (`ReelScoreboardCue`) |
 | `score/VideoOrientationDetector.swift` | Samples frames, runs `DetectHumanBodyPoseRequest` at four orientations, scores them (`BodyPoseEvidence`) |
 | `score/VideoRotationCorrection.swift` | The decision (`OrientationDecision.decide`), the correction enum and its transform |
-| `MediaExportService` | `uprightGeometry` takes a correction; `exportHighlightReel` takes scoreboard cues; `scoreboardOverlays` renders them |
-| `WatchConnectivityManager` | `exportMatchVideos` detects per segment before the full export; `exportHighlightReel` builds the scoreboard cues for the reel |
+| `MediaExportService` | `uprightGeometry` takes a correction, `fitting` letterboxes a piece of another size; `exportHighlightReel` takes scoreboard cues and the source's correction; `scoreboardOverlays` renders them |
+| `WatchConnectivityManager` | `exportMatchVideos` detects (pooled per stored geometry) before the full export; `exportHighlightReel` builds the scoreboard cues for the reel |
 
 ### Scoreboard timeline (pure)
 
@@ -108,6 +108,18 @@ For each clip:
 - The correction folds into the composition's layer transform (`uprightGeometry(naturalSize:
   preferredTransform:correction:)`), so no second export pass is needed.
 - Simulator footage (`MockVideoGenerator`) has no people and must decide `.none`.
+- A match is decided per group of segments stored alike (same video track `naturalSize` and `preferredTransform`,
+  i.e. the same camera setup): `VideoOrientationDetector.corrections(for:)` keeps each segment's scores, sums them
+  per group (a failed detection contributes nothing) and `OrientationDecision.groups(pooling:)` runs `decide` once
+  per group; every member gets the group's correction. Per-segment scores and each group's decision are logged.
+  A segment whose track cannot be read decides alone.
+- `makeComposition` renders at the first piece's upright size and places any piece of another size scaled to fit
+  (the smaller ratio) and centred on whole pixels (`MediaExportService.fitting`), over the composition's black
+  background: a mismatch letterboxes, never crops.
+- The raw-segment fallback (the full export failed for a one-segment match) keeps the segment's correction:
+  `exportHighlightReel(..., correction:)` applies it to every clip, and a turned reel is exported without the
+  board (the Core Image composition shows frames as stored, so it cannot follow the turn; warning logged). The
+  manager also retries a reel export that failed with the board once without it.
 
 **Changed from the plan, and why**
 
@@ -127,6 +139,15 @@ For each clip:
   iOS 27 it reads it at every rotation. The test uses where Vision puts the text box instead (a wide box
   in the top-left of its normalized, bottom-left-origin coordinates only with the right orientation).
 - *Silent footage did not export at all.* See the empty-track bullet under "Scoreboard: as built".
+- *Per-segment decisions could crop the match (review finding).* Each segment was decided alone, so a short
+  segment (one sampled frame), one with nobody in shot or one whose detection threw kept `.none` while its
+  neighbours turned a quarter; `makeComposition` took the render size from the first piece and placed the others
+  at the origin unscaled, so a 720x1280 piece in a 1280x720 render was cropped. Now segments stored alike pool
+  their evidence, and a piece of another size letterboxes. Trade-off: a phone turned over mid-match without its
+  capture metadata changing (lying flat) shares the group's decision.
+- *The raw-segment fallback dropped the correction (review finding).* The reel was cut from the raw file with no
+  correction, so a segment judged `.upsideDown180` gave an upside-down reel with an upright board over it. The
+  fallback now passes the segment's correction to the reel and the board is left out of a turned reel.
 
 **Evidence (October 2026)**
 
@@ -136,6 +157,10 @@ For each clip:
 | Correction enum, transform corners, inverse, decision rule, tilt weighting, sampling, `uprightGeometry` (landscape and portrait input, all four corrections) | `VideoOrientationTests` | pass |
 | Export with `.upsideDown180` / `.clockwise90`: frames read back from the file are the source turned (bright-pixel recall > 0.85 for the right mapping, < 0.5 for the opposite one), 1280x720 / 720x1280 | `VideoOrientationIntegrationTests`, PNGs in `.build/shots/reel/orientation/` | pass |
 | `exportMatchVideos` on a 3 s mock segment: detects, exports `_full.mov` at 1280x720, removes the segment | `VideoOrientationIntegrationTests` | pass (about 1 s) |
+| Pooled decision: a weak or failed segment follows its group, groups decide independently, all-weak and contradicting evidence stay `.none`, an unreadable segment decides alone; `fitting` letterboxes on whole pixels | `VideoOrientationTests` | pass |
+| Two segments, `[.none, .clockwise90]`: the second is letterboxed into the 1280x720 frame (bands x < 200 and x > 1080 mean luma 0.0, column 56.5; recall 1.0 clockwise vs 0.28 anticlockwise); the first is untouched (recall 1.0) | `VideoOrientationIntegrationTests`, `export-mixed-*.png` | pass |
+| Pooled detection with real Vision: a 1 s grey segment (nobody), a 3 s 1280x720 segment of a public-domain table-tennis photo turned a quarter, a 640x360 grey one. Alone: `none`, `clockwise90` (5.27 vs 0.08), `none`; pooled: `clockwise90, clockwise90, none`, logged "Orientation group [weak.mov, people.mov] stored 1280x720 [1 0 0 1 0 0]: ... -> clockwise90" | Mac, a scratch harness compiled from the same three sources as `scripts/detect-orientation.sh` | pass |
+| Reel with `correction: .upsideDown180`, with and without cues: 1280x720, turned half way (recall 1.0 vs 0.29 unturned), no board (0 gold pixels in the games box) | `ReelExportSourceTests`, `scoreboard-corrected-*reel-1.0s.png` | pass |
 | Detector on mock footage decides `.none` | simulator: error path in 5-105 ms; Mac: real detection, all scores 0 | `.none` |
 | Detector on people, each of the four turns | Mac, `--selftest` on three public-domain US Navy table-tennis photos (Wikimedia Commons) | 12 / 12 correct, winner 3.7-34x the runner-up |
 | Detection time, 60 s 720p mock (5 frames x 4 orientations) | Mac (M4 Max) | 332 ms cold, 113 ms warm |
