@@ -45,7 +45,10 @@ Builds need no booted simulator; `make test` needs an iOS 27 simulator runtime
 score/                      iOS app target
   ScoreApp.swift              @main; builds the ModelContainer and WatchConnectivityManager
   ContentView.swift           Root view -> HomeView
-  HomeView.swift              Start match (player-name sheet), resume, history, settings
+  HomeView.swift              Home screen: presentation state, sheets, alerts; New Match flow (active-match alert, name sheet)
+  HomeSections.swift          Home dashboard cards (live match / head-to-head, recent matches, watch status), empty state, New Match bar button
+  MatchNameSheet.swift        New Match sheet: Form with the two player names, Cancel / Start
+  HeadToHead.swift            Pure head-to-head record of the latest match's players (wins, draws, matches); AI previousMeetings extends it
   GameView.swift              Live match: camera preview, RecordingStatusBar (capture state), ScoringPanel, alerts
   ExportProgressView.swift    Modal shown while finishActiveMatch() stops, exports and saves (Game + Home)
   MatchHistoryView.swift      List of finished matches (scoreState.matchHistory, reloaded from the store at launch)
@@ -201,6 +204,8 @@ make screenshot OUT=.build/shots/home-ax.png NO_BUILD=1 \
   is UIKit's own Dynamic Type override; check at least `AccessibilityL` for truncation.
 - `scripts/screenshot.sh --udid <UDID> --no-build --wait 5 out.png` targets another simulator or
   reuses the last build; `--wait` lengthens the launch-to-capture delay for slow screens.
+- A launch without seed arguments keeps whatever an earlier seeded launch stored. For the empty
+  home screen, uninstall first: `xcrun simctl uninstall <UDID> armincerf.score`.
 - `.build/shots/` is gitignored; copy anything worth keeping into `docs/`.
 
 ## Icon

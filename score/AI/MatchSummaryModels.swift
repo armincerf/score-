@@ -169,7 +169,8 @@ nonisolated struct PreviousMeeting: Equatable, Sendable {
     let winner: Int  // 1, 2 or MatchResult.noWinner, relative to the current match's sides
 }
 
-nonisolated enum HeadToHead {
+/// Previous meetings for the summary prompt. The home screen's record is `HeadToHead.from(history:)` (HeadToHead.swift).
+nonisolated extension HeadToHead {
     /// Earlier matches between the same two players (the trimmed, case-insensitive name pair, in
     /// either order), newest first, with swapped-side meetings flipped onto `match`'s sides.
     /// `match` itself (by id) and matches that finished after it are excluded.
