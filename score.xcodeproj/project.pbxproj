@@ -497,6 +497,8 @@
 		DD2311FB2EDB829800C39373 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				LD_EXPORT_SYMBOLS = NO;
+				SWIFT_OPTIMIZATION_LEVEL = "-Osize";
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_IDENTITY = "Apple Development";
@@ -571,6 +573,8 @@
 		DD23120D2EDB8BC600C39373 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				LD_EXPORT_SYMBOLS = NO;
+				SWIFT_OPTIMIZATION_LEVEL = "-Osize";
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;

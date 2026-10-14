@@ -1,0 +1,106 @@
+{
+  "recorded": "2026-10-15",
+  "bead": "learn-latvian-ios-wfp.2",
+  "source": "https://blog.jacobstechtavern.com/p/app-size-101",
+  "baseline_commit": "e1a522d2437a639f6ee1e2deb6227a838e01f005",
+  "measurement": "Sum of regular file bytes inside an unsigned device Release .app, including embedded watch apps/extensions. Not an App Store download or thinned installation size.",
+  "toolchain": "Xcode 27.0 (27A266a)",
+  "before_bytes": 7733131,
+  "after_bytes": 7588243,
+  "saved_bytes": 144888,
+  "saved_percent": 1.87,
+  "before_binaries": [
+    {
+      "path": "score",
+      "bytes": 1937064,
+      "uuid": "UUID: 450A42FD-92AE-325F-A823-587792649C26",
+      "dsym_matches": true
+    },
+    {
+      "path": "Watch/scorewatch Watch App.app/scorewatch Watch App",
+      "bytes": 302848,
+      "uuid": "UUID: F9A0E244-F326-3D24-815F-147CF3682FA7",
+      "dsym_matches": true
+    }
+  ],
+  "after_binaries": [
+    {
+      "path": "score",
+      "bytes": 1808880,
+      "uuid": "UUID: AFE9992A-D670-3612-9C71-77142A3AD1B0",
+      "dsym_matches": true
+    },
+    {
+      "path": "Watch/scorewatch Watch App.app/scorewatch Watch App",
+      "bytes": 286144,
+      "uuid": "UUID: B70A336F-FEA3-377A-B354-309350868027",
+      "dsym_matches": true
+    }
+  ],
+  "retained_content": "All retained dictionary, lesson, audio and demo-route files are byte-identical. No source artwork changed.",
+  "regenerated_resource_differences": [
+    "Assets.car",
+    "Watch/scorewatch Watch App.app/Assets.car"
+  ],
+  "removed_resources": [],
+  "remaining_duplicate_groups_over_1kb": [],
+  "largest_remaining_files": [
+    {
+      "path": "Assets.car",
+      "bytes": 4592712,
+      "sha256": "e6a4008d77996abca2ca54c71a63afa42c4383e8dbda3779f4a39dc66615cafc"
+    },
+    {
+      "path": "score",
+      "bytes": 1808880,
+      "sha256": "7b69a48ca15fbe5bd63da207d90b6d97c4d4c7aa49c7e7a845ccec9cb9005e56"
+    },
+    {
+      "path": "Watch/scorewatch Watch App.app/Assets.car",
+      "bytes": 869016,
+      "sha256": "b37b523d97131759073fd50b6c51bb04b80edd0c8eebeb987bac527b995e7651"
+    },
+    {
+      "path": "Watch/scorewatch Watch App.app/scorewatch Watch App",
+      "bytes": 286144,
+      "sha256": "d67bacaaf4ac31017475e0596b47268f0f52dba6af3486db87aab2d1ae454cc0"
+    },
+    {
+      "path": "AppIcon76x76@2x~ipad.png",
+      "bytes": 16936,
+      "sha256": "7b9a3a56eb89bb93ea5cec2889d13e9850367295ab331a02cf33621c06d71bfb"
+    },
+    {
+      "path": "AppIcon60x60@2x.png",
+      "bytes": 11772,
+      "sha256": "de0c1e22a394447d144f96b0a95e349eb481ce0ba16e33aa335dbe34d470f582"
+    },
+    {
+      "path": "Info.plist",
+      "bytes": 1588,
+      "sha256": "a9dc0d8c05b0a6586b2ce750cbb4701ffb95321843e044d548329f97d3f5702e"
+    },
+    {
+      "path": "Watch/scorewatch Watch App.app/Info.plist",
+      "bytes": 1179,
+      "sha256": "d6b7df0650ef3f024193ff634b588ec61fff0f0bb2e1c4585b120041e37b5775"
+    }
+  ],
+  "local_evidence_directory": "/tmp/ios-app-size-20261014/score",
+  "reproduce_archive": "make size-archive SIZE_ARCHIVE=/tmp/score-size.xcarchive",
+  "reproduce_measurement": "Sum stat().st_size for every regular file recursively under Products/Applications/*.app, including embedded bundles; exclude symlinks.",
+  "release_settings": {
+    "LD_EXPORT_SYMBOLS": "NO",
+    "SWIFT_OPTIMIZATION_LEVEL": "-Osize",
+    "scope": "Application and embedded executable targets only; Debug unchanged; dependencies retain their own build settings."
+  },
+  "archive_debug_symbols": "Every app/extension/watch executable has a matching dSYM UUID; Xcode native archive stripping is retained.",
+  "excluded_options": "No lossy asset conversion, reflection metadata removal, manual binary stripping, dependency linkage changes, or removal of offline data.",
+  "verification": {
+    "gate": "make check SIM_NAME=\"App Size Verification\" PARALLEL=NO",
+    "result": "Passed: strict lint, iPhone and watch simulator builds, 297 tests passed, 1 skipped (opt-in export timing).",
+    "release_smoke": "make build CONFIGURATION=Release; installed and launched on an iOS 27 simulator; initial screen and New Match control visible.",
+    "screenshot": "/tmp/ios-app-size-20261014/score/release.png",
+    "test_results": ".build/results/test.xcresult"
+  }
+}

@@ -9,6 +9,7 @@ SHELL := /bin/bash
 PROJECT      := score.xcodeproj
 SCHEME       := score
 WATCH_SCHEME := scorewatch Watch App
+CONFIGURATION ?= Debug
 SIM_NAME     ?= iPhone 17 Pro
 # PARALLEL=NO runs the tests one at a time (CI: a dozen video exports at once thrashed the 3-core runner and
 # tripped time limits; serial timings are each test's own work)
@@ -20,12 +21,15 @@ BUILD_DIR    := .build
 LOG_DIR      := $(BUILD_DIR)/logs
 RESULT       := $(BUILD_DIR)/results/test.xcresult
 XCB          := scripts/xcb.sh
+# Unsigned device archive for local size comparisons; never uploads or reserves a build number.
+SIZE_ARCHIVE ?= $(BUILD_DIR)/size/score.xcarchive
+SIZE_DERIVED_DATA ?= $(BUILD_DIR)/size/DerivedData
 # Optional: `make test T=scoreTests/ServingLogicTests` runs one suite/test.
 T ?=
 ONLY := $(if $(T),-only-testing:'$(T)',)
 
 .PHONY: help setup build build-watch test test-summary lint format check skills clean sim-list sim-reset deploy install \
-        testflight testflight-export testflight-status testers screenshot
+        testflight testflight-export testflight-status testers screenshot size-archive
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
@@ -39,13 +43,19 @@ setup: ## Install dev tools (brew), git hooks and Xcode agent skills
 
 build: ## Build iOS app (+ embedded watch app) for the simulator, warnings-as-errors
 	@mkdir -p $(LOG_DIR)
-	set -o pipefail; xcodebuild build -project $(PROJECT) -scheme "$(SCHEME)" -destination '$(DEST_GENERIC)' \
+	set -o pipefail; xcodebuild build -project $(PROJECT) -scheme "$(SCHEME)" -configuration "$(CONFIGURATION)" -destination '$(DEST_GENERIC)' \
 	  CODE_SIGNING_ALLOWED=NO SWIFT_TREAT_WARNINGS_AS_ERRORS=YES 2>&1 | tee $(LOG_DIR)/build.log | $(XCB)
 
 build-watch: ## Build the watch app on its own
 	@mkdir -p $(LOG_DIR)
-	set -o pipefail; xcodebuild build -project $(PROJECT) -scheme "$(WATCH_SCHEME)" -destination '$(DEST_WATCH)' \
+	set -o pipefail; xcodebuild build -project $(PROJECT) -scheme "$(WATCH_SCHEME)" -configuration "$(CONFIGURATION)" -destination '$(DEST_WATCH)' \
 	  CODE_SIGNING_ALLOWED=NO SWIFT_TREAT_WARNINGS_AS_ERRORS=YES 2>&1 | tee $(LOG_DIR)/build-watch.log | $(XCB)
+
+size-archive: ## Archive Release for device size inspection, without signing or uploading
+	@mkdir -p $(LOG_DIR)
+	set -o pipefail; xcodebuild archive -project $(PROJECT) -scheme "$(SCHEME)" -configuration Release \
+	  -destination 'generic/platform=iOS' -derivedDataPath "$(SIZE_DERIVED_DATA)" -archivePath "$(SIZE_ARCHIVE)" \
+	  CODE_SIGNING_ALLOWED=NO 2>&1 | tee $(LOG_DIR)/size-archive.log | $(XCB)
 
 # -collect-test-diagnostics never: on a failure xcodebuild otherwise spends ~10 min in `simctl diagnose`
 # before it prints anything; the result bundle still holds every result.
